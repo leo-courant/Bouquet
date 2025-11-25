@@ -1,0 +1,24 @@
+"""Core module initialization."""
+
+from app.core.config import Settings, get_settings
+from app.core.dependencies import (
+    get_document_processor,
+    get_embedding_service,
+    get_entity_extractor,
+    get_graph_builder,
+    get_neo4j_repository,
+    get_query_engine,
+)
+from app.core.logging import setup_logging
+
+__all__ = [
+    "Settings",
+    "get_settings",
+    "setup_logging",
+    "get_neo4j_repository",
+    "get_embedding_service",
+    "get_entity_extractor",
+    "get_document_processor",
+    "get_graph_builder",
+    "get_query_engine",
+]

@@ -1,0 +1,81 @@
+"""FastAPI application entry point."""
+
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
+
+from app.api import api_router
+from app.core import get_settings, setup_logging
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan events."""
+    # Startup
+    setup_logging()
+    logger.info("Starting Smart RAG application")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down Smart RAG application")
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="Smart RAG",
+    description="Hierarchical Graph-of-Graphs RAG System",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# Get settings
+settings = get_settings()
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include API router
+app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+
+@app.get("/")
+async def root() -> dict:
+    """Root endpoint."""
+    return {
+        "name": settings.app_name,
+        "version": settings.app_version,
+        "status": "running",
+        "docs": "/docs",
+    }
+
+
+@app.get("/health")
+async def health_check() -> dict:
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "service": settings.app_name,
+        "version": settings.app_version,
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.app_debug,
+        log_level=settings.log_level.lower(),
+    )
