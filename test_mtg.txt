@@ -1,0 +1,87 @@
+Magic: The Gathering Overview
+
+Magic: The Gathering (MTG) is a trading card game that has become one of the most popular games in the world. Created by Richard Garfield and released by Wizards of the Coast in 1993, MTG combines strategic gameplay with collectible card elements. Players take on the role of Planeswalkers, powerful mages who travel between planes of existence and engage in magical battles.
+
+Each player constructs a deck of Magic cards, and the game revolves around managing resources (mana), casting spells, summoning creatures, and defending against threats. The objective is typically to reduce an opponent's life total from 20 to 0, although there are alternative victory conditions such as decking out (running out of cards to draw) or achieving a specific effect defined by a card.
+
+Card Types
+
+Creature: The primary means of combat in MTG, creatures have both power (damage dealt in combat) and toughness (how much damage they can take before being destroyed).
+
+Instant: A spell that can be cast at any time, even during an opponent's turn, allowing for reactive plays.
+
+Sorcery: Similar to an instant but can only be cast during a player's turn.
+
+Artifact: These are permanent cards with special abilities or effects, often colorless, and can be used for a variety of strategies.
+
+Enchantment: Permanent magical effects that influence the game, often affecting creatures or other game elements.
+
+Planeswalker: Powerful beings who have unique abilities that can be activated during a player's turn. These cards often represent key characters in MTG's lore.
+
+Colors of Magic
+
+Magic: The Gathering's gameplay is distinguished by the five "colors" of mana, each associated with different playstyles, strategies, and mechanics:
+
+White (W): White magic is about order, healing, and protection. White cards typically feature creatures like Angels, Soldiers, and Clerics. Key mechanics include lifelink, vigilance, and the ability to prevent damage or exile creatures.
+
+Blue (U): Blue is the color of knowledge, manipulation, and control. Blue cards focus on countering spells, drawing cards, and tapping into the flow of time and space. Mechanics like flying, scry, and counterspells are common in blue.
+
+Black (B): Black magic is the magic of death, decay, and ambition. Black cards often involve sacrificing creatures or losing life to gain an advantage. Common abilities include deathtouch, lifelink (on creatures), and graveyard manipulation.
+
+Red (R): Red is chaos, passion, and aggression. Red cards often feature direct damage spells, haste (allowing creatures to attack immediately), and burn spells. Red decks tend to focus on fast-paced, aggressive strategies.
+
+Green (G): Green is the color of nature, growth, and strength. Green cards generally feature large creatures like Elves, Giants, and Beasts, as well as ramp spells that generate extra mana. Key mechanics include trample and a focus on big creatures and ramping up to overwhelming power.
+
+Mechanics and Keywords
+
+Magic's gameplay is enriched by a variety of mechanics that define the strategies of different colors and card types. Some of the most common include:
+
+Trample (Green): A creature with trample can deal excess combat damage to the defending player or planeswalker if it overpowers blockers.
+
+Flying (Blue/White): A creature with flying can only be blocked by other creatures with flying or reach.
+
+Deathtouch (Black): A creature with deathtouch destroys any creature it deals damage to, no matter its toughness.
+
+Haste (Red): A creature with haste can attack or use abilities immediately after entering the battlefield.
+
+Lifelink (White/Black): A creature with lifelink allows its controller to gain life whenever it deals damage.
+
+Hexproof (Green): A creature with hexproof cannot be targeted by spells or abilities controlled by opponents.
+
+Game Formats
+
+Magic offers various formats, each with different rules and restrictions:
+
+Standard: A format that uses only the most recent card sets. Cards rotate out every year or so.
+
+Modern: A more expansive format, with a larger card pool from sets that have been released since 2003.
+
+Commander: A multiplayer format where each player uses a 100-card deck built around a single "commander" card. Players start with 40 life, and the game is often casual but strategic.
+
+Draft: A limited format where players pick cards from booster packs in a draft format, creating a deck on the spot from a limited pool.
+
+Sealed: Another limited format, where players open several booster packs and create decks from the cards they pull.
+
+Lore and Storyline
+
+MTG also features a deep and evolving storyline set across different planes of existence. The game's lore revolves around the adventures of Planeswalkers—powerful beings who can travel between worlds, each with its own set of characteristics, inhabitants, and magical laws.
+
+Prominent Planeswalkers include:
+
+Jace Beleren: A master of mental magic and illusion, often associated with blue mana. Jace is one of the most iconic characters in MTG.
+
+Chandra Nalaar: A fiery Planeswalker who represents red mana, with abilities that deal with destruction and passionate energy.
+
+Nicol Bolas: An ancient, powerful dragon who seeks domination over the multiverse. He is one of the most notorious antagonists in the game's lore.
+
+The game's expansions often coincide with the stories told in MTG's novels, comics, and other media, which expand on the adventures and battles of its central characters.
+
+Expansion Sets and Mechanics
+
+Each MTG set introduces new mechanics and themes. For example:
+
+Throne of Eldraine: A set based on fairy tales and Arthurian legend, introducing the adventure mechanic, which allows players to cast a spell and gain an additional effect.
+
+Ikoria: Lair of Behemoths: A set focused on gigantic monsters, mutations, and the ability to combine creatures in new ways using the keyword mutate.
+
+Zendikar Rising: A set with a focus on adventure, landfall, and the return of the Rogues mechanic.

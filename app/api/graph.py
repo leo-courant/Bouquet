@@ -28,11 +28,11 @@ async def get_graph_stats(
         )
 
 
-@router.post("/rebuild", response_model=dict)
+@router.post("/rebuild", response_model=None)
 async def rebuild_graph(
     graph_builder: GraphBuilder = Depends(get_graph_builder),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
-) -> dict:
+):
     """Rebuild the hierarchical graph-of-graphs structure."""
     try:
         result = await graph_builder.rebuild_graph(embedding_service)
@@ -115,11 +115,100 @@ async def get_community_members(
     return members
 
 
-@router.delete("/clear", response_model=dict)
+@router.get("/visualize", response_model=dict)
+async def get_graph_visualization(
+    limit: int = 200,
+    repository: Neo4jRepository = Depends(get_neo4j_repository),
+) -> dict:
+    """Get graph data for visualization (nodes and edges)."""
+    try:
+        # Query for nodes (entities, chunks, documents, communities)
+        nodes_query = """
+        MATCH (n)
+        WHERE n:Entity OR n:Chunk OR n:Document OR n:Community
+        WITH n, labels(n) as nodeLabels
+        RETURN n.id as id, 
+               coalesce(n.name, n.title, n.id, 'Node-' + toString(id(n))) as label,
+               nodeLabels[0] as type,
+               n.type as entityType,
+               n.level as level,
+               n.summary as summary,
+               n.content as content
+        LIMIT $limit
+        """
+        
+        # Query for relationships
+        edges_query = """
+        MATCH (n)-[r]->(m)
+        WHERE (n:Entity OR n:Chunk OR n:Document OR n:Community) 
+          AND (m:Entity OR m:Chunk OR m:Document OR m:Community)
+        RETURN n.id as source, 
+               m.id as target, 
+               type(r) as type,
+               r.weight as weight,
+               r.description as description
+        LIMIT $limit
+        """
+        
+        nodes = []
+        edges = []
+        
+        async with repository._driver.session(database=repository.database) as session:
+            # Fetch nodes
+            result = await session.run(nodes_query, {"limit": limit})
+            async for record in result:
+                node = {
+                    "id": str(record["id"]),
+                    "label": record["label"],
+                    "type": record["type"],
+                }
+                # Add optional fields
+                if record.get("entityType"):
+                    node["entityType"] = record["entityType"]
+                if record.get("level") is not None:
+                    node["level"] = record["level"]
+                if record.get("summary"):
+                    node["summary"] = record["summary"][:200]  # Truncate
+                if record.get("content"):
+                    node["content"] = record["content"][:200]  # Truncate
+                nodes.append(node)
+            
+            # Fetch edges
+            result = await session.run(edges_query, {"limit": limit})
+            async for record in result:
+                edge = {
+                    "source": str(record["source"]),
+                    "target": str(record["target"]),
+                    "type": record["type"],
+                }
+                if record.get("weight") is not None:
+                    edge["weight"] = record["weight"]
+                if record.get("description"):
+                    edge["description"] = record["description"]
+                edges.append(edge)
+        
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "count": {
+                "nodes": len(nodes),
+                "edges": len(edges),
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting graph visualization: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting graph visualization: {str(e)}",
+        )
+
+
+@router.delete("/clear", response_model=None)
 async def clear_graph(
     confirm: bool = False,
     repository: Neo4jRepository = Depends(get_neo4j_repository),
-) -> dict:
+):
     """Clear all data from the graph (requires confirmation)."""
     if not confirm:
         raise HTTPException(

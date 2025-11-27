@@ -2,6 +2,8 @@
 
 from typing import AsyncGenerator
 
+from fastapi import Depends
+
 from app.core.config import Settings, get_settings
 from app.repositories.neo4j_repository import Neo4jRepository
 from app.services.document_processor import DocumentProcessor
@@ -46,27 +48,23 @@ async def get_entity_extractor() -> EntityExtractor:
     )
 
 
-async def get_document_processor(
-    embedding_service: EmbeddingService = None,
-    entity_extractor: EntityExtractor = None,
-) -> DocumentProcessor:
+async def get_document_processor() -> DocumentProcessor:
     """Get document processor instance."""
     settings = get_settings()
-    if embedding_service is None:
-        embedding_service = await get_embedding_service()
-    if entity_extractor is None:
-        entity_extractor = await get_entity_extractor()
+    embedding_service = await get_embedding_service()
+    entity_extractor = await get_entity_extractor()
 
     return DocumentProcessor(
         embedding_service=embedding_service,
         entity_extractor=entity_extractor,
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
+        batch_size=settings.embedding_batch_size,
     )
 
 
 async def get_graph_builder(
-    repository: Neo4jRepository = None,
+    repository: Neo4jRepository = Depends(get_neo4j_repository),
 ) -> GraphBuilder:
     """Get graph builder instance."""
     settings = get_settings()
@@ -79,13 +77,11 @@ async def get_graph_builder(
 
 
 async def get_query_engine(
-    repository: Neo4jRepository = None,
-    embedding_service: EmbeddingService = None,
+    repository: Neo4jRepository = Depends(get_neo4j_repository),
 ) -> QueryEngine:
     """Get query engine instance."""
     settings = get_settings()
-    if embedding_service is None:
-        embedding_service = await get_embedding_service()
+    embedding_service = await get_embedding_service()
 
     return QueryEngine(
         repository=repository,

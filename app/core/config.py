@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=1000, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=200, alias="CHUNK_OVERLAP")
     max_entities_per_chunk: int = Field(default=50, alias="MAX_ENTITIES_PER_CHUNK")
+    embedding_batch_size: int = Field(default=20, alias="EMBEDDING_BATCH_SIZE")
 
     # Graph Construction
     min_community_size: int = Field(default=3, alias="MIN_COMMUNITY_SIZE")

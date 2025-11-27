@@ -17,35 +17,35 @@ Use this checklist to get your Smart RAG system up and running.
 ### 3. Configuration
 
 #### Option A: Using Docker (Recommended)
-- [ ] Copy `.env.example` to `.env`
+- [ ] Run setup: `make setup`
 - [ ] Edit `.env` and set `OPENAI_API_KEY=your-actual-key`
 - [ ] Edit `.env` and set `NEO4J_PASSWORD=your-secure-password`
-- [ ] Edit `docker-compose.yml` and update Neo4j password:
-  ```yaml
-  NEO4J_AUTH=neo4j/your-secure-password
-  ```
+- [ ] Note: The Neo4j password will be automatically picked up from `.env`
 
 #### Option B: Local Development
 - [ ] Install UV: `curl -LsSf https://astral.sh/uv/install.sh | sh` (Unix) or use PowerShell script (Windows)
-- [ ] Run setup script: `./setup.sh` (Unix) or `setup.bat` (Windows)
-- [ ] Install and start Neo4j locally
-- [ ] Copy `.env.example` to `.env`
+- [ ] Run setup: `make setup`
 - [ ] Edit `.env` with your `OPENAI_API_KEY` and `NEO4J_PASSWORD`
+- [ ] Start Neo4j: `make neo4j-start`
 
 ## 🚀 Deployment Checklist
 
 ### Docker Deployment
-- [ ] Start services: `docker-compose up -d`
-- [ ] Check services are running: `docker-compose ps`
-- [ ] View logs: `docker-compose logs -f app`
+- [ ] Build images: `make build`
+- [ ] Start services: `make up`
+- [ ] Check services are running: `make status`
+- [ ] View logs: `make logs` (or `make logs-app` for app only)
 - [ ] Wait for services to be healthy (30-60 seconds)
-- [ ] Test health endpoint: `curl http://localhost:8000/health`
+- [ ] Test health endpoint: `make health`
 
 ### Local Deployment
-- [ ] Activate virtual environment: `source .venv/bin/activate` (Unix) or `.venv\Scripts\activate` (Windows)
-- [ ] Ensure Neo4j is running: `neo4j status`
-- [ ] Start application: `uvicorn app.main:app --reload`
-- [ ] Test health endpoint: `curl http://localhost:8000/health`
+- [ ] Ensure Neo4j is running: `make neo4j-start`
+- [ ] Start application: `make dev`
+- [ ] Test health endpoint: `make health`
+
+### Quick Start (Everything in One Go)
+- [ ] Run: `make quickstart` and follow the instructions
+- [ ] Or run: `make start` to build and start everything
 
 ## 📝 Verification Checklist
 
@@ -101,7 +101,7 @@ curl -X POST "http://localhost:8000/api/v1/documents/text" \
 - [ ] Navigate to `POST /api/v1/graph/rebuild` in API docs
 - [ ] Click "Try it out" and "Execute"
 - [ ] Should receive success response with level counts
-- [ ] Wait for completion (check logs)
+- [ ] Wait for completion (check logs with `make logs-app`)
 
 Or using curl:
 ```bash
@@ -139,6 +139,11 @@ curl -X POST "http://localhost:8000/api/v1/query" \
 - [ ] Should see node counts, edge counts, etc.
 - [ ] Verify numbers > 0
 
+Or using Makefile:
+```bash
+make stats
+```
+
 ### 5. Explore in Neo4j Browser
 - [ ] Open http://localhost:7474
 - [ ] Run query: `MATCH (n) RETURN n LIMIT 25`
@@ -148,15 +153,14 @@ curl -X POST "http://localhost:8000/api/v1/query" \
 ## 📚 Load Sample Data Checklist (Optional)
 
 ### Using the init_db.py Script
-- [ ] Activate virtual environment (if local)
-- [ ] Run: `python scripts/init_db.py`
+- [ ] Run: `make init-db`
 - [ ] Wait for completion (may take 2-3 minutes)
 - [ ] Should see 3 documents processed
 - [ ] Should see communities created
 - [ ] Should see statistics displayed
 
 ### Verify Sample Data
-- [ ] Check graph stats: `curl http://localhost:8000/api/v1/graph/stats`
+- [ ] Check graph stats: `make stats`
 - [ ] List documents: `curl http://localhost:8000/api/v1/documents`
 - [ ] Should see 3 documents about AI/ML
 - [ ] List communities: `curl http://localhost:8000/api/v1/graph/communities`
@@ -165,19 +169,16 @@ curl -X POST "http://localhost:8000/api/v1/query" \
 ## 🧪 Run Tests Checklist (Optional)
 
 ### Setup for Testing
-- [ ] Activate virtual environment
-- [ ] Install dev dependencies: `uv pip install -e ".[dev]"`
+- [ ] Virtual environment will be created automatically
 
 ### Run Tests
-- [ ] Run all tests: `pytest`
+- [ ] Run all tests: `make test`
 - [ ] Should see tests passing
-- [ ] Run with coverage: `pytest --cov=app`
-- [ ] Check coverage report
 
 ### Code Quality
-- [ ] Format code: `black .`
-- [ ] Lint code: `ruff check .`
-- [ ] Type check: `mypy app/`
+- [ ] Format code: `make format`
+- [ ] Lint code: `make lint`
+- [ ] Type check: `make typecheck`
 - [ ] Should have no errors
 
 ## 🔍 Troubleshooting Checklist
@@ -190,11 +191,11 @@ curl -X POST "http://localhost:8000/api/v1/query" \
 - [ ] Ensure Python 3.11+ is being used
 
 ### If Neo4j Connection Fails
-- [ ] Verify Neo4j is running: `docker-compose ps` or `neo4j status`
-- [ ] Check NEO4J_PASSWORD matches in .env and docker-compose.yml
-- [ ] Verify NEO4J_URI is correct (bolt://localhost:7687 for local)
-- [ ] Check Neo4j logs: `docker-compose logs neo4j`
-- [ ] Try restarting Neo4j: `docker-compose restart neo4j`
+- [ ] Verify Neo4j is running: `make status`
+- [ ] Check NEO4J_PASSWORD is set in `.env` file
+- [ ] Verify NEO4J_URI is correct (bolt://neo4j:7687 for Docker, bolt://localhost:7687 for local)
+- [ ] Check Neo4j logs: `make logs-neo4j`
+- [ ] Try restarting Neo4j: `make restart`
 
 ### If OpenAI Calls Fail
 - [ ] Verify API key is valid at https://platform.openai.com/
@@ -205,7 +206,7 @@ curl -X POST "http://localhost:8000/api/v1/query" \
 
 ### If Queries Return No Results
 - [ ] Verify documents were uploaded successfully
-- [ ] Check graph was built: `curl http://localhost:8000/api/v1/graph/stats`
+- [ ] Check graph was built: `make stats`
 - [ ] Verify chunks have embeddings (check Neo4j: `MATCH (c:Chunk) RETURN c.embedding IS NOT NULL`)
 - [ ] Try rebuilding graph: `curl -X POST http://localhost:8000/api/v1/graph/rebuild`
 

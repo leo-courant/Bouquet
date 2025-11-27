@@ -1,11 +1,14 @@
 """Neo4j database repository for graph operations."""
 
+import json
+from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
 from loguru import logger
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from neo4j.exceptions import ServiceUnavailable
+from neo4j.time import DateTime as Neo4jDateTime
 
 from app.domain import (
     Chunk,
@@ -17,6 +20,13 @@ from app.domain import (
     GraphStats,
     Relationship,
 )
+
+
+def neo4j_datetime_to_python(dt: Any) -> datetime:
+    """Convert Neo4j DateTime to Python datetime."""
+    if isinstance(dt, Neo4jDateTime):
+        return dt.to_native()
+    return dt
 
 
 class Neo4jRepository:
@@ -75,27 +85,49 @@ class Neo4jRepository:
     # Document Operations
     async def create_document(self, document: Document) -> Document:
         """Create a new document node."""
-        query = """
-        CREATE (d:Document {
-            id: $id,
-            title: $title,
-            content: $content,
-            source: $source,
-            metadata: $metadata,
-            created_at: datetime($created_at),
-            updated_at: datetime($updated_at)
-        })
-        RETURN d
-        """
-        params = {
-            "id": str(document.id),
-            "title": document.title,
-            "content": document.content,
-            "source": document.source,
-            "metadata": document.metadata,
-            "created_at": document.created_at.isoformat(),
-            "updated_at": document.updated_at.isoformat(),
-        }
+        # Build query conditionally based on metadata
+        if document.metadata and len(document.metadata) > 0:
+            query = """
+            CREATE (d:Document {
+                id: $id,
+                title: $title,
+                content: $content,
+                source: $source,
+                created_at: datetime($created_at),
+                updated_at: datetime($updated_at),
+                metadata: $metadata
+            })
+            RETURN d
+            """
+            params = {
+                "id": str(document.id),
+                "title": document.title,
+                "content": document.content,
+                "source": document.source,
+                "created_at": document.created_at.isoformat(),
+                "updated_at": document.updated_at.isoformat(),
+                "metadata": json.dumps(document.metadata),  # Convert to JSON string
+            }
+        else:
+            query = """
+            CREATE (d:Document {
+                id: $id,
+                title: $title,
+                content: $content,
+                source: $source,
+                created_at: datetime($created_at),
+                updated_at: datetime($updated_at)
+            })
+            RETURN d
+            """
+            params = {
+                "id": str(document.id),
+                "title": document.title,
+                "content": document.content,
+                "source": document.source,
+                "created_at": document.created_at.isoformat(),
+                "updated_at": document.updated_at.isoformat(),
+            }
 
         async with self._driver.session(database=self.database) as session:
             await session.run(query, params)
@@ -113,14 +145,16 @@ class Neo4jRepository:
             record = await result.single()
             if record:
                 node = record["d"]
+                metadata_str = node.get("metadata", "{}")
+                metadata = json.loads(metadata_str) if metadata_str else {}
                 return Document(
                     id=UUID(node["id"]),
                     title=node["title"],
                     content=node["content"],
                     source=node.get("source"),
-                    metadata=node.get("metadata", {}),
-                    created_at=node["created_at"],
-                    updated_at=node["updated_at"],
+                    metadata=metadata,
+                    created_at=neo4j_datetime_to_python(node["created_at"]),
+                    updated_at=neo4j_datetime_to_python(node["updated_at"]),
                 )
             return None
 
@@ -144,30 +178,55 @@ class Neo4jRepository:
     # Chunk Operations
     async def create_chunk(self, chunk: Chunk) -> Chunk:
         """Create a new chunk node and link to document."""
-        query = """
-        MATCH (d:Document {id: $document_id})
-        CREATE (c:Chunk {
-            id: $id,
-            content: $content,
-            chunk_index: $chunk_index,
-            start_char: $start_char,
-            end_char: $end_char,
-            metadata: $metadata,
-            created_at: datetime($created_at)
-        })
-        CREATE (d)-[:HAS_CHUNK]->(c)
-        RETURN c
-        """
-        params = {
-            "id": str(chunk.id),
-            "document_id": str(chunk.document_id),
-            "content": chunk.content,
-            "chunk_index": chunk.chunk_index,
-            "start_char": chunk.start_char,
-            "end_char": chunk.end_char,
-            "metadata": chunk.metadata,
-            "created_at": chunk.created_at.isoformat(),
-        }
+        # Build query conditionally based on metadata
+        if chunk.metadata and len(chunk.metadata) > 0:
+            query = """
+            MATCH (d:Document {id: $document_id})
+            CREATE (c:Chunk {
+                id: $id,
+                content: $content,
+                chunk_index: $chunk_index,
+                start_char: $start_char,
+                end_char: $end_char,
+                created_at: datetime($created_at),
+                metadata: $metadata
+            })
+            CREATE (d)-[:HAS_CHUNK]->(c)
+            RETURN c
+            """
+            params = {
+                "id": str(chunk.id),
+                "document_id": str(chunk.document_id),
+                "content": chunk.content,
+                "chunk_index": chunk.chunk_index,
+                "start_char": chunk.start_char,
+                "end_char": chunk.end_char,
+                "created_at": chunk.created_at.isoformat(),
+                "metadata": json.dumps(chunk.metadata),  # Convert to JSON string
+            }
+        else:
+            query = """
+            MATCH (d:Document {id: $document_id})
+            CREATE (c:Chunk {
+                id: $id,
+                content: $content,
+                chunk_index: $chunk_index,
+                start_char: $start_char,
+                end_char: $end_char,
+                created_at: datetime($created_at)
+            })
+            CREATE (d)-[:HAS_CHUNK]->(c)
+            RETURN c
+            """
+            params = {
+                "id": str(chunk.id),
+                "document_id": str(chunk.document_id),
+                "content": chunk.content,
+                "chunk_index": chunk.chunk_index,
+                "start_char": chunk.start_char,
+                "end_char": chunk.end_char,
+                "created_at": chunk.created_at.isoformat(),
+            }
 
         async with self._driver.session(database=self.database) as session:
             await session.run(query, params)
@@ -195,6 +254,8 @@ class Neo4jRepository:
             record = await result.single()
             if record:
                 node = record["c"]
+                metadata_str = node.get("metadata", "{}")
+                metadata = json.loads(metadata_str) if metadata_str else {}
                 return Chunk(
                     id=UUID(node["id"]),
                     document_id=UUID(record["document_id"]),
@@ -203,44 +264,64 @@ class Neo4jRepository:
                     chunk_index=node["chunk_index"],
                     start_char=node["start_char"],
                     end_char=node["end_char"],
-                    metadata=node.get("metadata", {}),
-                    created_at=node["created_at"],
+                    metadata=metadata,
+                    created_at=neo4j_datetime_to_python(node["created_at"]),
                 )
             return None
 
     # Entity Operations
     async def create_entity(self, entity: Entity) -> Entity:
         """Create or merge an entity node."""
-        query = """
-        MERGE (e:Entity {name: $name, entity_type: $entity_type})
-        ON CREATE SET 
-            e.id = $id,
-            e.description = $description,
-            e.metadata = $metadata
-        ON MATCH SET
-            e.description = COALESCE($description, e.description),
-            e.metadata = COALESCE($metadata, e.metadata)
-        RETURN e
-        """
-        params = {
-            "id": str(entity.id),
-            "name": entity.name,
-            "entity_type": entity.entity_type,
-            "description": entity.description,
-            "metadata": entity.metadata,
-        }
+        # Build query conditionally based on metadata
+        if entity.metadata and len(entity.metadata) > 0:
+            query = """
+            MERGE (e:Entity {name: $name, entity_type: $entity_type})
+            ON CREATE SET 
+                e.id = $id,
+                e.description = $description,
+                e.metadata = $metadata
+            ON MATCH SET
+                e.description = COALESCE($description, e.description),
+                e.metadata = COALESCE($metadata, e.metadata)
+            RETURN e
+            """
+            params = {
+                "id": str(entity.id),
+                "name": entity.name,
+                "entity_type": entity.entity_type,
+                "description": entity.description,
+                "metadata": json.dumps(entity.metadata),  # Convert to JSON string
+            }
+        else:
+            query = """
+            MERGE (e:Entity {name: $name, entity_type: $entity_type})
+            ON CREATE SET 
+                e.id = $id,
+                e.description = $description
+            ON MATCH SET
+                e.description = COALESCE($description, e.description)
+            RETURN e
+            """
+            params = {
+                "id": str(entity.id),
+                "name": entity.name,
+                "entity_type": entity.entity_type,
+                "description": entity.description,
+            }
 
         async with self._driver.session(database=self.database) as session:
             result = await session.run(query, params)
             record = await result.single()
             node = record["e"]
+            metadata_str = node.get("metadata", "{}")
+            metadata = json.loads(metadata_str) if metadata_str else {}
             logger.debug(f"Created/merged entity: {entity.name}")
             return Entity(
                 id=UUID(node["id"]),
                 name=node["name"],
                 entity_type=node["entity_type"],
                 description=node.get("description"),
-                metadata=node.get("metadata", {}),
+                metadata=metadata,
             )
 
     async def link_chunk_to_entity(self, chunk_id: UUID, entity_id: UUID) -> None:
@@ -366,7 +447,7 @@ class Neo4jRepository:
         MATCH (d:Document)-[:HAS_CHUNK]->(c)
         WITH c, d, 
              gds.similarity.cosine(c.embedding, $embedding) AS score
-        WHERE score > 0.5
+        WHERE score > 0.3
         RETURN c, d.id as document_id, score
         ORDER BY score DESC
         LIMIT $top_k
@@ -376,6 +457,8 @@ class Neo4jRepository:
             result = await session.run(query, {"embedding": embedding, "top_k": top_k})
             async for record in result:
                 node = record["c"]
+                metadata_str = node.get("metadata", "{}")
+                metadata = json.loads(metadata_str) if metadata_str else {}
                 chunk = Chunk(
                     id=UUID(node["id"]),
                     document_id=UUID(record["document_id"]),
@@ -384,8 +467,8 @@ class Neo4jRepository:
                     chunk_index=node["chunk_index"],
                     start_char=node["start_char"],
                     end_char=node["end_char"],
-                    metadata=node.get("metadata", {}),
-                    created_at=node["created_at"],
+                    metadata=metadata,
+                    created_at=neo4j_datetime_to_python(node["created_at"]),
                 )
                 results.append((chunk, record["score"]))
         return results
@@ -401,13 +484,15 @@ class Neo4jRepository:
             result = await session.run(query, {"chunk_id": str(chunk_id)})
             async for record in result:
                 node = record["e"]
+                metadata_str = node.get("metadata", "{}")
+                metadata = json.loads(metadata_str) if metadata_str else {}
                 entities.append(
                     Entity(
                         id=UUID(node["id"]),
                         name=node["name"],
                         entity_type=node["entity_type"],
                         description=node.get("description"),
-                        metadata=node.get("metadata", {}),
+                        metadata=metadata,
                     )
                 )
         return entities

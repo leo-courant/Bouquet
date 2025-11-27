@@ -2,6 +2,7 @@
 
 from typing import Optional
 from uuid import UUID
+import io
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from loguru import logger
@@ -14,42 +15,98 @@ from app.services import DocumentProcessor
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.post("/upload", response_model=dict)
+def extract_text_from_pdf(content: bytes) -> str:
+    """Extract text from PDF file."""
+    try:
+        from pypdf import PdfReader
+        
+        pdf_file = io.BytesIO(content)
+        reader = PdfReader(pdf_file)
+        
+        text_parts = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                text_parts.append(text)
+        
+        return "\n\n".join(text_parts)
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="PDF support not installed. Install pypdf package.",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to extract text from PDF: {str(e)}",
+        )
+
+
+@router.post("/upload", response_model=None)
 async def upload_document(
     file: UploadFile = File(...),
     title: Optional[str] = None,
+    extract_entities: bool = False,  # Default to False for faster uploads
     repository: Neo4jRepository = Depends(get_neo4j_repository),
     processor: DocumentProcessor = Depends(get_document_processor),
-) -> dict:
-    """Upload and process a document."""
+):
+    """Upload and process a document.
+    
+    Args:
+        file: The file to upload
+        title: Optional custom title (defaults to filename)
+        extract_entities: If True, extracts entities (slow). If False, only creates chunks and embeddings (fast).
+    """
     try:
         # Read file content
         content = await file.read()
-        text = content.decode("utf-8")
+        
+        # Determine file type and extract text
+        filename = file.filename or "untitled"
+        if filename.lower().endswith('.pdf'):
+            logger.info(f"Processing PDF file: {filename}")
+            text = extract_text_from_pdf(content)
+        else:
+            # Try to decode as UTF-8 text
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File must be a valid UTF-8 text file or PDF",
+                )
+        
+        # Validate text is not empty
+        if not text or not text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No text could be extracted from the file",
+            )
 
         # Use filename as title if not provided
-        doc_title = title or file.filename or "Untitled"
+        doc_title = title or filename
+
+        logger.info(f"Processing document: {doc_title} ({len(text)} characters)")
 
         # Process document
         document = await processor.process_text(
             text=text,
             title=doc_title,
             repository=repository,
-            source=file.filename,
+            source=filename,
+            extract_entities=extract_entities,
         )
 
         return {
             "document_id": str(document.id),
             "title": document.title,
             "status": "processed",
+            "chunks": len(document.chunks) if hasattr(document, 'chunks') else 0,
             "message": "Document uploaded and processed successfully",
         }
 
-    except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="File must be a valid UTF-8 encoded text file",
-        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error uploading document: {e}")
         raise HTTPException(
@@ -58,14 +115,14 @@ async def upload_document(
         )
 
 
-@router.post("/text", response_model=dict)
+@router.post("/text", response_model=None)
 async def create_document_from_text(
     title: str,
     content: str,
     source: Optional[str] = None,
     repository: Neo4jRepository = Depends(get_neo4j_repository),
     processor: DocumentProcessor = Depends(get_document_processor),
-) -> dict:
+):
     """Create a document from raw text."""
     try:
         document = await processor.process_text(
@@ -105,11 +162,11 @@ async def get_document(
     return document
 
 
-@router.delete("/{document_id}", response_model=dict)
+@router.delete("/{document_id}", response_model=None)
 async def delete_document(
     document_id: UUID,
     repository: Neo4jRepository = Depends(get_neo4j_repository),
-) -> dict:
+):
     """Delete a document and all associated data."""
     deleted = await repository.delete_document(document_id)
     if not deleted:
@@ -150,3 +207,73 @@ async def list_documents(
             })
 
     return documents
+
+
+@router.post("/{document_id}/extract-entities", response_model=None)
+async def extract_entities_for_document(
+    document_id: UUID,
+    repository: Neo4jRepository = Depends(get_neo4j_repository),
+    processor: DocumentProcessor = Depends(get_document_processor),
+):
+    """Extract entities for a document's chunks (background job).
+    
+    Use this to process entities for documents uploaded with extract_entities=False.
+    """
+    try:
+        # Get document
+        document = await repository.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+        
+        # Get all chunks for this document
+        query = """
+        MATCH (d:Document {id: $document_id})-[:HAS_CHUNK]->(c:Chunk)
+        RETURN c
+        ORDER BY c.chunk_index
+        """
+        
+        chunks = []
+        async with repository._driver.session(database=repository.database) as session:
+            result = await session.run(query, {"document_id": str(document_id)})
+            async for record in result:
+                from app.repositories.neo4j_repository import neo4j_datetime_to_python
+                import json
+                node = record["c"]
+                metadata_str = node.get("metadata", "{}")
+                metadata = json.loads(metadata_str) if metadata_str else {}
+                from app.domain import Chunk
+                chunk = Chunk(
+                    id=UUID(node["id"]),
+                    document_id=document_id,
+                    content=node["content"],
+                    embedding=node.get("embedding"),
+                    chunk_index=node["chunk_index"],
+                    start_char=node["start_char"],
+                    end_char=node["end_char"],
+                    metadata=metadata,
+                    created_at=neo4j_datetime_to_python(node["created_at"]),
+                )
+                chunks.append(chunk)
+        
+        if not chunks:
+            raise HTTPException(status_code=404, detail=f"No chunks found for document {document_id}")
+        
+        # Process entities for all chunks
+        await processor._process_entities_batch(chunks, repository)
+        
+        return {
+            "status": "success",
+            "message": f"Extracted entities for {len(chunks)} chunks",
+            "document_id": str(document_id),
+            "chunks_processed": len(chunks),
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting entities: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error extracting entities: {str(e)}",
+        )
+

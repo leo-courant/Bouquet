@@ -5,7 +5,10 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from loguru import logger
+from pathlib import Path
 
 from app.api import api_router
 from app.core import get_settings, setup_logging
@@ -47,10 +50,18 @@ app.add_middleware(
 # Include API router
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 
+# Mount static files
+static_path = Path(__file__).parent.parent / "static"
+if static_path.exists():
+    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+
 
 @app.get("/")
-async def root() -> dict:
-    """Root endpoint."""
+async def root():
+    """Serve the web interface."""
+    index_path = static_path / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
     return {
         "name": settings.app_name,
         "version": settings.app_version,

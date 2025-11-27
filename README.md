@@ -4,9 +4,11 @@ A production-ready, hierarchical Graph-of-Graphs Retrieval-Augmented Generation 
 
 ## Features
 
+- **Web Interface**: Simple, intuitive chat interface with document upload and graph visualization
 - **Hierarchical Graph Construction**: Multi-level knowledge graph with community detection
 - **Advanced Document Processing**: Intelligent chunking, entity extraction, and embedding generation
 - **Graph-of-Graphs Architecture**: Hierarchical clustering with multiple abstraction levels
+- **Interactive Graph Visualization**: Explore your knowledge graph with D3.js-powered visualizations
 - **Semantic Retrieval**: Vector similarity search combined with graph traversal
 - **Context-Aware Answering**: LLM-powered answers with source attribution
 - **Async/Await**: Full asynchronous API for high performance
@@ -29,58 +31,154 @@ Documents → Chunks → Entities → Local Graphs → Communities → Hierarchi
 ### Prerequisites
 
 - Python 3.11+
-- Neo4j 5.0+
+- Docker and Docker Compose
 - OpenAI API Key
-- UV package manager
+- Make (optional, but recommended)
 
 ### Installation
 
-1. Clone the repository:
+**Two options: Local Development (recommended) or Full Docker**
+
+#### Option 1: Local Development (Recommended)
+
+Run Neo4j in Docker, but run your app locally for faster development:
+
 ```bash
-git clone <repository-url>
-cd smart_rag
+# Setup environment
+make setup
+
+# Edit .env file with your OpenAI API key and Neo4j password
+nano .env
+
+# Start development mode (starts Neo4j + runs app locally with auto-reload)
+make dev
 ```
 
-2. Install UV (if not already installed):
+This will:
+- Start Neo4j in Docker
+- Run the FastAPI app locally with hot-reload
+- Any changes to your code will automatically restart the server
+- Access the web interface at http://localhost:8000
+
+To stop: Press `Ctrl+C`, then run `docker compose down` to stop Neo4j.
+
+#### Option 2: Full Docker Deployment
+
+Run everything in Docker containers:
+
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# Setup and build
+make setup
+# Edit .env with your configuration
+make build
+make up
 ```
 
-3. Create virtual environment and install dependencies:
+5. Check health:
 ```bash
-uv venv
-uv pip install -e .
+make health
 ```
 
-4. Set up environment variables:
+The API will be available at `http://localhost:8000`
+
+## Using the Web Interface
+
+After starting the services, open your browser and navigate to:
+
+**http://localhost:8000**
+
+The web interface provides:
+
+### 📄 Document Upload
+- **Drag & Drop**: Drop files directly into the upload area
+- **Click to Browse**: Select multiple files from your computer
+- **Supported Formats**: .txt, .md, .pdf files
+- **Real-time Feedback**: See upload progress and status
+
+### 💬 Chat Interface
+- **Ask Questions**: Type natural language questions about your documents
+- **Source Attribution**: See which documents were used to answer your questions
+- **Similarity Scores**: View relevance scores for each source
+- **Conversation History**: Track your queries and responses
+
+### 🕸️ Graph Visualization
+- **Interactive Graph**: Explore your knowledge graph visually
+- **Node Types**: 
+  - 🟣 Purple: Documents
+  - 🟣 Dark Purple: Communities
+  - 🟢 Green: Entities
+  - 🔵 Blue: Chunks
+- **Hover Information**: See detailed info about nodes and edges
+- **Zoom & Pan**: Navigate large graphs easily
+- **Drag Nodes**: Rearrange the graph layout
+
+### 📊 Live Statistics
+- View real-time counts of documents, entities, chunks, and communities
+- Track your knowledge base growth
+
+### Workflow
+1. **Upload Documents**: Drag files into the upload area
+2. **Rebuild Graph**: Click "🔄 Rebuild Graph" to process documents and build the knowledge graph
+3. **Explore Graph**: View the visual representation of your knowledge
+4. **Ask Questions**: Use the chat to query your documents
+5. **Refresh**: Update the graph visualization as needed
+
+### Alternative: Manual Setup
+
+If you prefer not to use Make:
+
+1. Copy environment file:
 ```bash
 cp .env.example .env
 # Edit .env with your configuration
 ```
 
-5. Start Neo4j (using Docker):
+2. Start services:
 ```bash
-docker-compose up -d neo4j
+docker-compose build
+docker-compose up -d
 ```
 
-6. Run the application:
+3. Check health:
 ```bash
-uv run uvicorn app.main:app --reload
+curl http://localhost:8000/health
 ```
-
-The API will be available at `http://localhost:8000`
 
 ## Docker Deployment
 
+### Quick Start with Makefile
 ```bash
+make quickstart  # Initial setup
+# Edit .env with your OPENAI_API_KEY and NEO4J_PASSWORD
+make start       # Build and start everything
+```
+
+### Manual Docker Commands
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+docker-compose build
 docker-compose up -d
 ```
 
 This starts:
-- Neo4j graph database (port 7474, 7687)
+- Neo4j graph database (ports 7474, 7687)
 - Smart RAG API (port 8000)
 
+### Useful Make Commands
+```bash
+make help        # Show all available commands
+make status      # Check service status
+make logs        # View logs
+make stats       # Get graph statistics
+make clean       # Stop and remove containers
+```
+
 ## API Endpoints
+
+### Web Interface
+
+- `GET /` - Web-based chat and visualization interface
 
 ### Document Management
 
@@ -96,6 +194,7 @@ This starts:
 ### Graph Management
 
 - `GET /api/v1/graph/stats` - Get graph statistics
+- `GET /api/v1/graph/visualize` - Get graph data for visualization
 - `POST /api/v1/graph/rebuild` - Rebuild hierarchical graph
 - `GET /api/v1/graph/communities` - List detected communities
 
@@ -106,8 +205,10 @@ This starts:
 ## API Documentation
 
 Interactive API docs available at:
+- **Web Interface**: `http://localhost:8000` (recommended)
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
+- Neo4j Browser: `http://localhost:7474` (username: neo4j, password: from .env)
 
 ## Configuration
 
