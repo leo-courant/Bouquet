@@ -245,16 +245,24 @@
             cursor: pointer;
             transition: all 0.2s;
             border: 2px solid transparent;
+            user-select: none;
         }
 
         .source-item:hover {
             background: #e0f2fe;
             border-color: #60a5fa;
+            transform: translateX(2px);
+        }
+
+        .source-item:active {
+            transform: scale(0.98);
         }
 
         .source-item.selected {
-            background: #fff7ed;
-            border-color: #f97316;
+            background: #fef2f2;
+            border-color: #ef4444;
+            color: #991b1b;
+            font-weight: 500;
         }
 
         .input-group {
@@ -584,6 +592,9 @@
                     <h3>🕸️ Graph View</h3>
                     <button class="btn" id="refreshGraphBtn">Refresh Graph</button>
                     <button class="btn btn-secondary" id="resetZoomBtn">Reset Zoom</button>
+                    <p style="font-size: 11px; color: #64748b; margin-top: 10px; line-height: 1.4;">
+                        💡 <strong>Tip:</strong> Hold <kbd style="background: #f1f5f9; padding: 2px 4px; border-radius: 3px; border: 1px solid #cbd5e1;">Shift</kbd> and drag to zoom to an area
+                    </p>
                 </div>
                 <svg id="graph-svg"></svg>
                 <div class="tooltip" id="tooltip"></div>

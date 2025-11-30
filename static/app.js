@@ -184,15 +184,28 @@ function addMessage(text, type, isLoading = false, sources = null) {
                 sourceItem.className = 'source-item';
                 const similarity = (source.score * 100).toFixed(1);
                 const docTitle = source.metadata?.document_title || 'Document';
+                
+                // Ensure chunk_id is a string
+                const chunkId = String(source.chunk_id);
+                
                 sourceItem.innerHTML = `${idx + 1}. <strong>${docTitle}</strong> (${similarity}% relevant)`;
-                sourceItem.dataset.chunkId = source.chunk_id;
+                sourceItem.dataset.chunkId = chunkId;
+                sourceItem.title = 'Click to highlight in graph';
+                
+                console.log('Creating source item:', { idx, chunkId, docTitle });
                 
                 // Add click handler to highlight this specific source
                 sourceItem.addEventListener('click', (e) => {
                     e.stopPropagation();
                     
-                    const clickedChunkId = source.chunk_id;
+                    const clickedChunkId = chunkId;
                     const isCurrentlySelected = selectedSourceId === clickedChunkId;
+                    
+                    console.log('Source item clicked!', { 
+                        clickedChunkId, 
+                        isCurrentlySelected, 
+                        currentSelection: selectedSourceId 
+                    });
                     
                     // Remove selected class from all source items
                     document.querySelectorAll('.source-item.selected').forEach(el => {
@@ -202,16 +215,16 @@ function addMessage(text, type, isLoading = false, sources = null) {
                     if (isCurrentlySelected) {
                         // Deselecting - clear selection
                         selectedSourceId = null;
+                        console.log('Deselected source');
                     } else {
                         // Selecting - add selected class and set ID
                         sourceItem.classList.add('selected');
                         selectedSourceId = clickedChunkId;
+                        console.log('Selected source:', clickedChunkId);
                     }
                     
                     // Update graph highlights
                     updateNodeHighlights();
-                    
-                    console.log('Source clicked:', clickedChunkId, 'Selected:', selectedSourceId);
                 });
                 
                 sourcesDiv.appendChild(sourceItem);
@@ -219,7 +232,7 @@ function addMessage(text, type, isLoading = false, sources = null) {
             messageDiv.appendChild(sourcesDiv);
             
             // Highlight retrieved chunks in graph
-            highlightChunks(sources.map(s => s.chunk_id));
+            highlightChunks(sources.map(s => String(s.chunk_id)));
         }
     }
     
@@ -560,6 +573,9 @@ function initializeGraph() {
     document.getElementById('refreshGraphBtn').addEventListener('click', loadGraph);
     document.getElementById('resetZoomBtn').addEventListener('click', resetZoom);
 
+    // Initialize rectangle selection
+    initializeRectangleSelection();
+
     // Load initial graph
     loadGraph();
 
@@ -680,7 +696,7 @@ function renderGraph() {
         .attr('fill', d => {
             if (d.type === 'Chunk') {
                 if (d.id === selectedSourceId) {
-                    return '#f97316'; // Orange for selected
+                    return '#ef4444'; // Red for selected
                 }
                 if (highlightedChunks.has(d.id)) {
                     return '#fbbf24'; // Amber for highlighted
@@ -691,7 +707,7 @@ function renderGraph() {
         .attr('stroke', d => {
             if (d.type === 'Chunk') {
                 if (d.id === selectedSourceId) {
-                    return '#ea580c';
+                    return '#dc2626'; // Dark red stroke
                 }
                 if (highlightedChunks.has(d.id)) {
                     return '#f59e0b';
@@ -813,7 +829,7 @@ function hideTooltip() {
 }
 
 function resetZoom() {
-    // Fit all nodes in view
+    // Fit all nodes in view with optimal scaling
     if (!graphData.nodes || graphData.nodes.length === 0) {
         svg.transition().duration(750).call(
             zoom.transform,
@@ -838,22 +854,174 @@ function resetZoom() {
     const width = +svg.attr('width');
     const height = +svg.attr('height');
     
-    const dx = xExtent[1] - xExtent[0];
-    const dy = yExtent[1] - yExtent[0];
+    // Calculate bounds with node radii included
+    const maxRadius = Math.max(...nodes.map(n => getNodeRadius(n)));
+    const padding = maxRadius + 40; // Include node size plus extra padding
+    
+    const dx = xExtent[1] - xExtent[0] + padding * 2;
+    const dy = yExtent[1] - yExtent[0] + padding * 2;
     const x = (xExtent[0] + xExtent[1]) / 2;
     const y = (yExtent[0] + yExtent[1]) / 2;
     
-    // Add padding
-    const padding = 50;
+    // Calculate scale to fit all nodes perfectly
     const scale = Math.min(
-        0.9 / Math.max(dx / (width - padding * 2), dy / (height - padding * 2)),
-        2 // Max zoom level
+        width / dx,
+        height / dy
     );
     
     const transform = d3.zoomIdentity
         .translate(width / 2, height / 2)
         .scale(scale)
         .translate(-x, -y);
+    
+    svg.transition().duration(750).call(
+        zoom.transform,
+        transform
+    );
+}
+
+// Rectangle selection for zoom
+let selectionRect = null;
+let selectionStartPoint = null;
+let isSelecting = false;
+
+function initializeRectangleSelection() {
+    const svgElement = document.getElementById('graph-svg');
+    
+    // Disable default zoom behavior when Shift is pressed
+    svg.on('mousedown.zoom', function(event) {
+        if (event.shiftKey) {
+            event.stopImmediatePropagation();
+        }
+    }, true);
+    
+    svgElement.addEventListener('mousedown', (event) => {
+        // Only start selection if Shift key is pressed
+        if (!event.shiftKey) return;
+        
+        // Only start selection on svg background or the g element (not on nodes/edges)
+        const isValidTarget = event.target === svgElement || 
+                             event.target.tagName === 'svg' || 
+                             event.target.tagName === 'g';
+        if (!isValidTarget) return;
+        
+        isSelecting = true;
+        const point = d3.pointer(event, svg.node());
+        selectionStartPoint = { x: point[0], y: point[1] };
+        
+        // Create selection rectangle
+        if (selectionRect) selectionRect.remove();
+        selectionRect = svg.append('rect')
+            .attr('class', 'selection-rect')
+            .attr('x', selectionStartPoint.x)
+            .attr('y', selectionStartPoint.y)
+            .attr('width', 0)
+            .attr('height', 0)
+            .attr('fill', 'rgba(102, 126, 234, 0.1)')
+            .attr('stroke', '#667eea')
+            .attr('stroke-width', 2)
+            .attr('stroke-dasharray', '5,5')
+            .style('pointer-events', 'none'); // Don't interfere with mouse events
+        
+        event.preventDefault();
+        event.stopPropagation();
+    });
+    
+    svgElement.addEventListener('mousemove', (event) => {
+        if (!isSelecting || !selectionStartPoint) return;
+        
+        const point = d3.pointer(event, svg.node());
+        const x = Math.min(point[0], selectionStartPoint.x);
+        const y = Math.min(point[1], selectionStartPoint.y);
+        const width = Math.abs(point[0] - selectionStartPoint.x);
+        const height = Math.abs(point[1] - selectionStartPoint.y);
+        
+        selectionRect
+            .attr('x', x)
+            .attr('y', y)
+            .attr('width', width)
+            .attr('height', height);
+        
+        event.preventDefault();
+    });
+    
+    svgElement.addEventListener('mouseup', (event) => {
+        if (!isSelecting || !selectionStartPoint) return;
+        
+        const point = d3.pointer(event, svg.node());
+        const x = Math.min(point[0], selectionStartPoint.x);
+        const y = Math.min(point[1], selectionStartPoint.y);
+        const width = Math.abs(point[0] - selectionStartPoint.x);
+        const height = Math.abs(point[1] - selectionStartPoint.y);
+        
+        // Only zoom if selection is large enough (not just a click)
+        if (width > 10 && height > 10) {
+            zoomToSelection(x, y, width, height);
+        }
+        
+        // Clean up
+        if (selectionRect) {
+            selectionRect.remove();
+            selectionRect = null;
+        }
+        selectionStartPoint = null;
+        isSelecting = false;
+        
+        event.preventDefault();
+    });
+    
+    // Cancel selection on Escape or when Shift is released
+    document.addEventListener('keyup', (event) => {
+        if (event.key === 'Shift' && isSelecting) {
+            if (selectionRect) {
+                selectionRect.remove();
+                selectionRect = null;
+            }
+            selectionStartPoint = null;
+            isSelecting = false;
+        }
+    });
+    
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && isSelecting) {
+            if (selectionRect) {
+                selectionRect.remove();
+                selectionRect = null;
+            }
+            selectionStartPoint = null;
+            isSelecting = false;
+        }
+    });
+}
+
+function zoomToSelection(x, y, width, height) {
+    const svgWidth = +svg.attr('width');
+    const svgHeight = +svg.attr('height');
+    
+    // Get current transform
+    const currentTransform = d3.zoomTransform(svg.node());
+    
+    // Convert screen coordinates to graph coordinates
+    const graphX = (x - currentTransform.x) / currentTransform.k;
+    const graphY = (y - currentTransform.y) / currentTransform.k;
+    const graphWidth = width / currentTransform.k;
+    const graphHeight = height / currentTransform.k;
+    
+    // Calculate center of selection in graph coordinates
+    const centerX = graphX + graphWidth / 2;
+    const centerY = graphY + graphHeight / 2;
+    
+    // Calculate scale to fit selection
+    const scale = Math.min(
+        svgWidth / graphWidth,
+        svgHeight / graphHeight
+    ) * 0.9; // 0.9 for small padding
+    
+    // Create transform to center and scale the selection
+    const transform = d3.zoomIdentity
+        .translate(svgWidth / 2, svgHeight / 2)
+        .scale(scale)
+        .translate(-centerX, -centerY);
     
     svg.transition().duration(750).call(
         zoom.transform,
@@ -894,7 +1062,7 @@ function updateNodeHighlights() {
         .attr('fill', d => {
             if (d.type === 'Chunk') {
                 if (d.id === selectedSourceId) {
-                    return '#f97316'; // Orange for selected source
+                    return '#ef4444'; // Red for selected source
                 }
                 if (highlightedChunks.has(d.id)) {
                     return '#fbbf24'; // Amber for retrieved chunks
@@ -905,7 +1073,7 @@ function updateNodeHighlights() {
         .attr('stroke', d => {
             if (d.type === 'Chunk') {
                 if (d.id === selectedSourceId) {
-                    return '#ea580c'; // Dark orange stroke for selected
+                    return '#dc2626'; // Dark red stroke for selected
                 }
                 if (highlightedChunks.has(d.id)) {
                     return '#f59e0b'; // Amber stroke
