@@ -186,6 +186,34 @@ function addMessage(text, type, isLoading = false, sources = null) {
                 const docTitle = source.metadata?.document_title || 'Document';
                 sourceItem.innerHTML = `${idx + 1}. <strong>${docTitle}</strong> (${similarity}% relevant)`;
                 sourceItem.dataset.chunkId = source.chunk_id;
+                
+                // Add click handler to highlight this specific source
+                sourceItem.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    
+                    const clickedChunkId = source.chunk_id;
+                    const isCurrentlySelected = selectedSourceId === clickedChunkId;
+                    
+                    // Remove selected class from all source items
+                    document.querySelectorAll('.source-item.selected').forEach(el => {
+                        el.classList.remove('selected');
+                    });
+                    
+                    if (isCurrentlySelected) {
+                        // Deselecting - clear selection
+                        selectedSourceId = null;
+                    } else {
+                        // Selecting - add selected class and set ID
+                        sourceItem.classList.add('selected');
+                        selectedSourceId = clickedChunkId;
+                    }
+                    
+                    // Update graph highlights
+                    updateNodeHighlights();
+                    
+                    console.log('Source clicked:', clickedChunkId, 'Selected:', selectedSourceId);
+                });
+                
                 sourcesDiv.appendChild(sourceItem);
             });
             messageDiv.appendChild(sourcesDiv);
@@ -409,6 +437,9 @@ async function uploadFile(file) {
             'system'
         );
         
+        // Refresh graph to include new chunks
+        await loadGraph();
+        
     } catch (error) {
         // Update card: error
         updateFileCard(file, 'error', 0, error.message);
@@ -594,9 +625,16 @@ function renderGraph() {
     const width = +svg.attr('width');
     const height = +svg.attr('height');
 
-    // Validate node IDs
+    // Validate node IDs and create a set for quick lookup
     const validNodes = graphData.nodes.filter(n => n.id);
-    const validEdges = graphData.edges.filter(e => e.source && e.target);
+    const nodeIdSet = new Set(validNodes.map(n => n.id));
+    
+    // Filter edges to only include those where both source and target exist in our node set
+    const validEdges = graphData.edges.filter(e => {
+        const sourceId = typeof e.source === 'object' ? e.source.id : e.source;
+        const targetId = typeof e.target === 'object' ? e.target.id : e.target;
+        return sourceId && targetId && nodeIdSet.has(sourceId) && nodeIdSet.has(targetId);
+    });
     
     if (validNodes.length === 0) {
         console.error('No valid nodes with IDs found!');
@@ -629,26 +667,46 @@ function renderGraph() {
         .data(validNodes)
         .enter().append('circle')
         .attr('r', d => {
-            if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
-                return getNodeRadius(d) * 1.5;
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return getNodeRadius(d) * 2;
+                }
+                if (highlightedChunks.has(d.id)) {
+                    return getNodeRadius(d) * 1.5;
+                }
             }
             return getNodeRadius(d);
         })
         .attr('fill', d => {
-            if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
-                return '#fbbf24';
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return '#f97316'; // Orange for selected
+                }
+                if (highlightedChunks.has(d.id)) {
+                    return '#fbbf24'; // Amber for highlighted
+                }
             }
             return getNodeColor(d);
         })
         .attr('stroke', d => {
-            if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
-                return '#f59e0b';
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return '#ea580c';
+                }
+                if (highlightedChunks.has(d.id)) {
+                    return '#f59e0b';
+                }
             }
             return '#fff';
         })
         .attr('stroke-width', d => {
-            if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
-                return 3;
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return 4;
+                }
+                if (highlightedChunks.has(d.id)) {
+                    return 3;
+                }
             }
             return 2;
         })
@@ -662,7 +720,7 @@ function renderGraph() {
     // Create labels
     const labels = g.append('g')
         .selectAll('text')
-        .data(graphData.nodes)
+        .data(validNodes)
         .enter().append('text')
         .text(d => truncateLabel(d.label))
         .attr('font-size', '10px')
@@ -755,53 +813,133 @@ function hideTooltip() {
 }
 
 function resetZoom() {
+    // Fit all nodes in view
+    if (!graphData.nodes || graphData.nodes.length === 0) {
+        svg.transition().duration(750).call(
+            zoom.transform,
+            d3.zoomIdentity
+        );
+        return;
+    }
+    
+    // Calculate bounds of all nodes
+    const nodes = graphData.nodes.filter(n => n.x !== undefined && n.y !== undefined);
+    if (nodes.length === 0) {
+        svg.transition().duration(750).call(
+            zoom.transform,
+            d3.zoomIdentity
+        );
+        return;
+    }
+    
+    const xExtent = d3.extent(nodes, d => d.x);
+    const yExtent = d3.extent(nodes, d => d.y);
+    
+    const width = +svg.attr('width');
+    const height = +svg.attr('height');
+    
+    const dx = xExtent[1] - xExtent[0];
+    const dy = yExtent[1] - yExtent[0];
+    const x = (xExtent[0] + xExtent[1]) / 2;
+    const y = (yExtent[0] + yExtent[1]) / 2;
+    
+    // Add padding
+    const padding = 50;
+    const scale = Math.min(
+        0.9 / Math.max(dx / (width - padding * 2), dy / (height - padding * 2)),
+        2 // Max zoom level
+    );
+    
+    const transform = d3.zoomIdentity
+        .translate(width / 2, height / 2)
+        .scale(scale)
+        .translate(-x, -y);
+    
     svg.transition().duration(750).call(
         zoom.transform,
-        d3.zoomIdentity
+        transform
     );
 }
 
 // Chunk highlighting
 let highlightedChunks = new Set();
+let selectedSourceId = null;
 
 function highlightChunks(chunkIds) {
     // Store highlighted chunks
     highlightedChunks = new Set(chunkIds);
+    selectedSourceId = null; // Clear selected source when new query results come in
     
     // If graph is rendered, update node colors
-    if (g && graphData.nodes) {
-        g.selectAll('circle')
-            .transition()
-            .duration(500)
-            .attr('fill', d => {
-                if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
-                    return '#fbbf24'; // Highlight color (amber)
+    updateNodeHighlights();
+}
+
+function highlightSelectedSource(chunkId) {
+    // Toggle selection - if clicking same source, deselect it
+    if (selectedSourceId === chunkId) {
+        selectedSourceId = null;
+    } else {
+        selectedSourceId = chunkId;
+    }
+    
+    updateNodeHighlights();
+}
+
+function updateNodeHighlights() {
+    if (!g || !graphData.nodes) return;
+    
+    g.selectAll('circle')
+        .transition()
+        .duration(500)
+        .attr('fill', d => {
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return '#f97316'; // Orange for selected source
                 }
-                return getNodeColor(d);
-            })
-            .attr('stroke', d => {
-                if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
-                    return '#f59e0b'; // Highlight stroke
+                if (highlightedChunks.has(d.id)) {
+                    return '#fbbf24'; // Amber for retrieved chunks
                 }
-                return '#fff';
-            })
-            .attr('stroke-width', d => {
-                if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
+            }
+            return getNodeColor(d);
+        })
+        .attr('stroke', d => {
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return '#ea580c'; // Dark orange stroke for selected
+                }
+                if (highlightedChunks.has(d.id)) {
+                    return '#f59e0b'; // Amber stroke
+                }
+            }
+            return '#fff';
+        })
+        .attr('stroke-width', d => {
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return 4;
+                }
+                if (highlightedChunks.has(d.id)) {
                     return 3;
                 }
-                return 2;
-            })
-            .attr('r', d => {
-                if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
+            }
+            return 2;
+        })
+        .attr('r', d => {
+            if (d.type === 'Chunk') {
+                if (d.id === selectedSourceId) {
+                    return getNodeRadius(d) * 2; // Even larger for selected
+                }
+                if (highlightedChunks.has(d.id)) {
                     return getNodeRadius(d) * 1.5;
                 }
-                return getNodeRadius(d);
-            });
-    }
+            }
+            return getNodeRadius(d);
+        });
 }
 
 function clearHighlights() {
     highlightedChunks.clear();
+    selectedSourceId = null;
     if (g && graphData.nodes) {
         g.selectAll('circle')
             .transition()
@@ -847,7 +985,7 @@ function initializeDatabaseControls() {
             
             // Clear graph visualization
             graphData = { nodes: [], edges: [] };
-            updateGraph();
+            renderGraph();
             
             // Reload stats
             await loadStats();

@@ -105,7 +105,7 @@ def extract_text_from_pdf(content: bytes) -> str:
 async def upload_document(
     file: UploadFile = File(...),
     title: Optional[str] = None,
-    extract_entities: bool = False,  # Default to False for faster uploads
+    extract_entities: bool = True,  # Default to True so documents appear in graph
     repository: Neo4jRepository = Depends(get_neo4j_repository),
     processor: DocumentProcessor = Depends(get_document_processor),
 ):

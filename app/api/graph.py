@@ -122,7 +122,8 @@ async def get_graph_visualization(
 ) -> dict:
     """Get graph data for visualization (nodes and edges)."""
     try:
-        # Query for nodes - use CASE to avoid missing property warnings
+        # Query for nodes and their relationships together to ensure consistency
+        # First get nodes, then get edges between those nodes
         nodes_query = """
         MATCH (n)
         WHERE n:Entity OR n:Chunk OR n:Document OR n:Community
@@ -145,21 +146,8 @@ async def get_graph_visualization(
         LIMIT $limit
         """
         
-        # Query for relationships
-        edges_query = """
-        MATCH (n)-[r]->(m)
-        WHERE (n:Entity OR n:Chunk OR n:Document OR n:Community) 
-          AND (m:Entity OR m:Chunk OR m:Document OR m:Community)
-        RETURN n.id as source, 
-               m.id as target, 
-               type(r) as type,
-               r.weight as weight,
-               r.description as description
-        LIMIT $limit
-        """
-        
         nodes = []
-        edges = []
+        node_ids = set()
         
         async with repository._driver.session(database=repository.database) as session:
             # Fetch nodes
@@ -174,8 +162,11 @@ async def get_graph_visualization(
                     logger.warning(f"Skipping node without ID: {record}")
                     continue
                 
+                node_id_str = str(node_id)
+                node_ids.add(node_id_str)
+                
                 node = {
-                    "id": str(node_id),
+                    "id": node_id_str,
                     "label": str(record["label"]) if record["label"] else "Unknown",
                     "type": str(record["type"]) if record["type"] else "Unknown",
                 }
@@ -194,8 +185,24 @@ async def get_graph_visualization(
             
             logger.info(f"Fetched {node_count} nodes for visualization")
             
-            # Fetch edges
-            result = await session.run(edges_query, {"limit": limit})
+            # Now query for edges only between the nodes we have
+            # Use a parameterized query with the collected node IDs
+            edges_query = """
+            MATCH (n)-[r]->(m)
+            WHERE (n:Entity OR n:Chunk OR n:Document OR n:Community) 
+              AND (m:Entity OR m:Chunk OR m:Document OR m:Community)
+              AND n.id IN $node_ids
+              AND m.id IN $node_ids
+            RETURN n.id as source, 
+                   m.id as target, 
+                   type(r) as type,
+                   r.weight as weight,
+                   r.description as description
+            LIMIT $limit
+            """
+            
+            edges = []
+            result = await session.run(edges_query, {"limit": limit, "node_ids": list(node_ids)})
             edge_count = 0
             async for record in result:
                 edge_count += 1
