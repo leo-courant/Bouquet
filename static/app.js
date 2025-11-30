@@ -17,7 +17,74 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeGraph();
     loadStats();
     checkHealth();
+    initializeDatabaseControls();
+    initializeAutoCleanup();
+    initializeResizable();
 });
+
+// Resizable Sidebar
+function initializeResizable() {
+    const sidebar = document.getElementById('sidebar');
+    const resizeHandle = document.getElementById('resizeHandle');
+    const container = document.querySelector('.container');
+    
+    const MIN_WIDTH = 400; // Minimum sidebar width (starting position)
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = MIN_WIDTH;
+
+    resizeHandle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = sidebar.offsetWidth;
+        resizeHandle.classList.add('resizing');
+        document.body.style.cursor = 'ew-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+
+        const delta = e.clientX - startX;
+        const newWidth = startWidth + delta;
+
+        // Only allow expansion to the right (never smaller than MIN_WIDTH)
+        if (newWidth >= MIN_WIDTH) {
+            container.style.setProperty('--sidebar-width', `${newWidth}px`);
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizeHandle.classList.remove('resizing');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    });
+}
+
+// Auto-cleanup: Clear database when tab/window closes
+function initializeAutoCleanup() {
+    // Clear database on page unload (tab close, browser close, navigation away)
+    window.addEventListener('beforeunload', async (event) => {
+        // Use sendBeacon for reliable cleanup even as page unloads
+        const url = `${API_V1}/graph/clear?confirm=true`;
+        
+        // Try fetch with keepalive first
+        try {
+            await fetch(url, {
+                method: 'DELETE',
+                keepalive: true  // Ensures request completes even if page unloads
+            });
+        } catch (error) {
+            console.log('Cleanup on unload:', error);
+        }
+    });
+    
+    console.log('Auto-cleanup initialized: Database will be cleared when you close this tab');
+}
 
 // Health Check
 async function checkHealth() {
@@ -477,11 +544,18 @@ async function loadGraph() {
     try {
         const response = await fetch(`${API_V1}/graph/visualize?limit=200`);
         if (!response.ok) {
-            console.error('Failed to load graph');
+            console.error('Failed to load graph:', response.status, response.statusText);
             return;
         }
 
         graphData = await response.json();
+        console.log('Loaded graph data:', {
+            nodeCount: graphData.nodes?.length || 0,
+            edgeCount: graphData.edges?.length || 0,
+            sampleNode: graphData.nodes?.[0],
+            sampleEdge: graphData.edges?.[0]
+        });
+        
         renderGraph();
         
     } catch (error) {
@@ -490,6 +564,11 @@ async function loadGraph() {
 }
 
 function renderGraph() {
+    // Stop existing simulation if it exists
+    if (simulation) {
+        simulation.stop();
+    }
+
     if (!graphData.nodes || graphData.nodes.length === 0) {
         // Clear existing elements
         g.selectAll('*').remove();
@@ -506,6 +585,8 @@ function renderGraph() {
         return;
     }
 
+    console.log('Rendering graph with', graphData.nodes.length, 'nodes and', graphData.edges.length, 'edges');
+
     // Clear existing elements
     g.selectAll('*').remove();
 
@@ -513,8 +594,19 @@ function renderGraph() {
     const width = +svg.attr('width');
     const height = +svg.attr('height');
 
-    simulation = d3.forceSimulation(graphData.nodes)
-        .force('link', d3.forceLink(graphData.edges)
+    // Validate node IDs
+    const validNodes = graphData.nodes.filter(n => n.id);
+    const validEdges = graphData.edges.filter(e => e.source && e.target);
+    
+    if (validNodes.length === 0) {
+        console.error('No valid nodes with IDs found!');
+        return;
+    }
+    
+    console.log(`Valid nodes: ${validNodes.length}/${graphData.nodes.length}, Valid edges: ${validEdges.length}/${graphData.edges.length}`);
+
+    simulation = d3.forceSimulation(validNodes)
+        .force('link', d3.forceLink(validEdges)
             .id(d => d.id)
             .distance(100))
         .force('charge', d3.forceManyBody().strength(-300))
@@ -524,7 +616,7 @@ function renderGraph() {
     // Create edges
     const links = g.append('g')
         .selectAll('line')
-        .data(graphData.edges)
+        .data(validEdges)
         .enter().append('line')
         .attr('stroke', '#94a3b8')
         .attr('stroke-width', d => (d.weight ? d.weight * 2 : 1))
@@ -534,7 +626,7 @@ function renderGraph() {
     // Create nodes
     const nodes = g.append('g')
         .selectAll('circle')
-        .data(graphData.nodes)
+        .data(validNodes)
         .enter().append('circle')
         .attr('r', d => {
             if (d.type === 'Chunk' && highlightedChunks.has(d.id)) {
@@ -719,6 +811,56 @@ function clearHighlights() {
             .attr('stroke-width', 2)
             .attr('r', d => getNodeRadius(d));
     }
+}
+
+// Database Controls
+function initializeDatabaseControls() {
+    const clearDbBtn = document.getElementById('clearDbBtn');
+    
+    if (!clearDbBtn) return; // Button not found
+    
+    clearDbBtn.addEventListener('click', async () => {
+        if (!confirm('⚠️ WARNING: This will delete ALL data from the database.\n\nThis includes:\n- All documents\n- All chunks\n- All entities\n- All communities\n- All relationships\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?')) {
+            return;
+        }
+        
+        if (!confirm('Final confirmation: Delete everything?')) {
+            return;
+        }
+        
+        try {
+            clearDbBtn.disabled = true;
+            clearDbBtn.textContent = 'Clearing...';
+            
+            const response = await fetch(`${API_V1}/graph/clear?confirm=true`, {
+                method: 'DELETE'
+            });
+            
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({ detail: 'Failed to clear database' }));
+                throw new Error(error.detail);
+            }
+            
+            const result = await response.json();
+            
+            addMessage('✓ Database cleared successfully', 'system');
+            
+            // Clear graph visualization
+            graphData = { nodes: [], edges: [] };
+            updateGraph();
+            
+            // Reload stats
+            await loadStats();
+            
+            clearDbBtn.textContent = '🗑️ Clear Database';
+            clearDbBtn.disabled = false;
+            
+        } catch (error) {
+            addMessage(`✗ Error clearing database: ${error.message}`, 'system');
+            clearDbBtn.textContent = '🗑️ Clear Database';
+            clearDbBtn.disabled = false;
+        }
+    });
 }
 
 // Refresh stats periodically

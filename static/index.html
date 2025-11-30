@@ -20,7 +20,7 @@
 
         .container {
             display: grid;
-            grid-template-columns: 400px 1fr;
+            grid-template-columns: var(--sidebar-width, 400px) 1fr;
             grid-template-rows: 60px 1fr;
             height: 100vh;
             gap: 0;
@@ -66,6 +66,28 @@
             border-right: 1px solid #e5e7eb;
             display: flex;
             flex-direction: column;
+            position: relative;
+            min-width: 400px;
+        }
+
+        .resize-handle {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 5px;
+            cursor: ew-resize;
+            background: transparent;
+            z-index: 100;
+            transition: background 0.2s;
+        }
+
+        .resize-handle:hover {
+            background: rgba(102, 126, 234, 0.3);
+        }
+
+        .resize-handle.resizing {
+            background: rgba(102, 126, 234, 0.5);
         }
 
         .main-content {
@@ -471,7 +493,8 @@
             </div>
         </header>
 
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
+            <div class="resize-handle" id="resizeHandle"></div>
             <div class="upload-section">
                 <h2>📄 Upload Documents</h2>
                 <div class="upload-area" id="uploadArea">
@@ -489,6 +512,11 @@
                 <div style="margin-top: 15px;">
                     <button class="btn btn-secondary" id="rebuildBtn" style="width: 100%;">
                         🔄 Rebuild Graph
+                    </button>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button class="btn" id="clearDbBtn" style="width: 100%; background: #ef4444;">
+                        🗑️ Clear Database
                     </button>
                 </div>
             </div>

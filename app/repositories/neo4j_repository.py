@@ -500,25 +500,36 @@ class Neo4jRepository:
     # Statistics
     async def get_graph_stats(self) -> GraphStats:
         """Get statistics about the knowledge graph."""
-        query = """
+        # Count nodes by label separately
+        count_query = """
         MATCH (n)
-        OPTIONAL MATCH ()-[r]->()
-        WITH labels(n) as labels, count(DISTINCT n) as node_count, 
-             count(DISTINCT r) as edge_count
-        RETURN labels, node_count, edge_count
+        WITH labels(n)[0] as label, count(n) as count
+        RETURN label, count
         """
+        
+        # Count edges
+        edge_query = """
+        MATCH ()-[r]->()
+        RETURN count(r) as edge_count
+        """
+        
         stats = GraphStats()
 
         async with self._driver.session(database=self.database) as session:
-            result = await session.run(query)
+            # Get node counts by type
+            result = await session.run(count_query)
             async for record in result:
-                labels = record["labels"]
-                node_count = record["node_count"]
-                stats.total_nodes += node_count
-                stats.total_edges += record["edge_count"]
-
-                for label in labels:
-                    stats.nodes_by_type[label] = stats.nodes_by_type.get(label, 0) + node_count
+                label = record["label"]
+                count = record["count"]
+                if label:  # Skip nodes without labels
+                    stats.nodes_by_type[label] = count
+                    stats.total_nodes += count
+            
+            # Get edge count
+            result = await session.run(edge_query)
+            record = await result.single()
+            if record:
+                stats.total_edges = record["edge_count"] or 0
 
             # Calculate metrics
             if stats.total_nodes > 0:
@@ -526,7 +537,8 @@ class Neo4jRepository:
                 max_edges = stats.total_nodes * (stats.total_nodes - 1)
                 if max_edges > 0:
                     stats.density = stats.total_edges / max_edges
-
+        
+        logger.info(f"Graph stats: {stats.total_nodes} nodes, {stats.total_edges} edges, by type: {stats.nodes_by_type}")
         return stats
 
     async def clear_all(self) -> None:

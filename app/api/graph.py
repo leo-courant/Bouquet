@@ -122,18 +122,26 @@ async def get_graph_visualization(
 ) -> dict:
     """Get graph data for visualization (nodes and edges)."""
     try:
-        # Query for nodes (entities, chunks, documents, communities)
+        # Query for nodes - use CASE to avoid missing property warnings
         nodes_query = """
         MATCH (n)
         WHERE n:Entity OR n:Chunk OR n:Document OR n:Community
         WITH n, labels(n) as nodeLabels
         RETURN n.id as id, 
-               coalesce(n.name, n.title, n.id, 'Node-' + toString(id(n))) as label,
+               CASE 
+                   WHEN n.name IS NOT NULL THEN n.name
+                   WHEN n.title IS NOT NULL THEN n.title
+                   ELSE n.id
+               END as label,
                nodeLabels[0] as type,
-               n.type as entityType,
-               n.level as level,
-               n.summary as summary,
-               n.content as content
+               CASE WHEN n:Entity THEN n.entity_type ELSE null END as entityType,
+               CASE WHEN n:Community THEN n.level ELSE null END as level,
+               CASE WHEN n:Community THEN n.summary ELSE null END as summary,
+               CASE 
+                   WHEN n:Chunk THEN n.content
+                   WHEN n:Document THEN n.content
+                   ELSE null
+               END as content
         LIMIT $limit
         """
         
@@ -156,38 +164,65 @@ async def get_graph_visualization(
         async with repository._driver.session(database=repository.database) as session:
             # Fetch nodes
             result = await session.run(nodes_query, {"limit": limit})
+            node_count = 0
             async for record in result:
+                node_count += 1
+                node_id = record["id"]
+                
+                # Validate node has an ID
+                if not node_id:
+                    logger.warning(f"Skipping node without ID: {record}")
+                    continue
+                
                 node = {
-                    "id": str(record["id"]),
-                    "label": record["label"],
-                    "type": record["type"],
+                    "id": str(node_id),
+                    "label": str(record["label"]) if record["label"] else "Unknown",
+                    "type": str(record["type"]) if record["type"] else "Unknown",
                 }
-                # Add optional fields
+                
+                # Add optional fields only if they exist
                 if record.get("entityType"):
-                    node["entityType"] = record["entityType"]
+                    node["entityType"] = str(record["entityType"])
                 if record.get("level") is not None:
-                    node["level"] = record["level"]
+                    node["level"] = int(record["level"])
                 if record.get("summary"):
-                    node["summary"] = record["summary"][:200]  # Truncate
+                    node["summary"] = str(record["summary"])[:200]  # Truncate
                 if record.get("content"):
-                    node["content"] = record["content"][:200]  # Truncate
+                    node["content"] = str(record["content"])[:200]  # Truncate
+                    
                 nodes.append(node)
+            
+            logger.info(f"Fetched {node_count} nodes for visualization")
             
             # Fetch edges
             result = await session.run(edges_query, {"limit": limit})
+            edge_count = 0
             async for record in result:
+                edge_count += 1
+                source_id = record["source"]
+                target_id = record["target"]
+                
+                # Validate edge has source and target
+                if not source_id or not target_id:
+                    logger.warning(f"Skipping edge without valid source/target: {record}")
+                    continue
+                
                 edge = {
-                    "source": str(record["source"]),
-                    "target": str(record["target"]),
-                    "type": record["type"],
+                    "source": str(source_id),
+                    "target": str(target_id),
+                    "type": str(record["type"]) if record["type"] else "UNKNOWN",
                 }
+                
                 if record.get("weight") is not None:
-                    edge["weight"] = record["weight"]
+                    edge["weight"] = float(record["weight"])
                 if record.get("description"):
-                    edge["description"] = record["description"]
+                    edge["description"] = str(record["description"])
+                    
                 edges.append(edge)
+            
+            logger.info(f"Fetched {edge_count} edges for visualization")
         
-        return {
+        result = {
             "nodes": nodes,
             "edges": edges,
             "count": {
@@ -195,9 +230,12 @@ async def get_graph_visualization(
                 "edges": len(edges),
             }
         }
+        
+        logger.info(f"Returning visualization with {len(nodes)} nodes and {len(edges)} edges")
+        return result
     
     except Exception as e:
-        logger.error(f"Error getting graph visualization: {e}")
+        logger.error(f"Error getting graph visualization: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error getting graph visualization: {str(e)}",

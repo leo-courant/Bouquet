@@ -123,6 +123,7 @@ up: env-check
 		echo "ERROR: .env file not found. Run 'make setup' first."; \
 		exit 1; \
 	fi
+	@docker compose down 2>/dev/null || true
 	docker compose up -d
 	@echo ""
 	@echo "✓ Services started!"
@@ -177,8 +178,17 @@ status:
 # neo4j-start: Start only the Neo4j Docker service (useful for local dev)
 neo4j-start: env-check
 	@echo "Starting Neo4j..."
+	@docker compose down neo4j 2>/dev/null || true
 	docker compose up -d neo4j
-	@echo "✓ Neo4j started"
+	@echo "Waiting for Neo4j to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
+		if docker compose exec -T neo4j cypher-shell -u neo4j -p "$$NEO4J_PASSWORD" "RETURN 1" >/dev/null 2>&1; then \
+			echo "✓ Neo4j is ready!"; \
+			break; \
+		fi; \
+		echo "  Waiting for Neo4j... ($$i/12)"; \
+		sleep 5; \
+	done
 	@echo "  - Browser: http://localhost:7474"
 	@echo "  - Bolt: bolt://localhost:7687"
 
@@ -248,9 +258,17 @@ dev: env-check
 		touch .venv/installed.marker; \
 	fi
 	@echo "Starting Neo4j in Docker..."
+	@docker compose down neo4j 2>/dev/null || true
 	@docker compose up -d neo4j
 	@echo "Waiting for Neo4j to be ready..."
-	@sleep 5
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
+		if docker compose exec -T neo4j cypher-shell -u neo4j -p "$$NEO4J_PASSWORD" "RETURN 1" >/dev/null 2>&1; then \
+			echo "✓ Neo4j is ready!"; \
+			break; \
+		fi; \
+		echo "  Waiting for Neo4j... ($$i/12)"; \
+		sleep 5; \
+	done
 	@echo ""
 	@echo "✓ Neo4j started at http://localhost:7474"
 	@echo "✓ Starting development server with auto-reload..."

@@ -20,11 +20,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     setup_logging()
     logger.info("Starting Smart RAG application")
+    
+    # Clear database on startup for fresh state
+    try:
+        from app.core import get_neo4j_repository
+        repo = get_neo4j_repository()
+        await repo.clear_all()
+        logger.info("Database cleared on startup - starting with fresh state")
+    except Exception as e:
+        logger.warning(f"Could not clear database on startup: {e}")
 
     yield
 
-    # Shutdown
+    # Shutdown - also clear database
     logger.info("Shutting down Smart RAG application")
+    try:
+        from app.core import get_neo4j_repository
+        repo = get_neo4j_repository()
+        await repo.clear_all()
+        logger.info("Database cleared on shutdown")
+    except Exception as e:
+        logger.warning(f"Could not clear database on shutdown: {e}")
 
 
 # Create FastAPI app

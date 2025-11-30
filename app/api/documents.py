@@ -3,6 +3,7 @@
 from typing import Optional
 from uuid import UUID
 import io
+import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from loguru import logger
@@ -15,8 +16,66 @@ from app.services import DocumentProcessor
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+# Memory safety constants
+MAX_FILE_SIZE_MB = 50  # Reject files larger than 50MB
+STREAM_CHUNK_SIZE = 256 * 1024  # 256KB chunks for streaming
+
+
+async def extract_text_from_pdf_streaming(file: UploadFile) -> str:
+    """Extract text from PDF file using streaming to avoid loading entire file into memory.
+    
+    Uses SpooledTemporaryFile to keep small files in memory but large ones on disk.
+    """
+    try:
+        from pypdf import PdfReader
+        
+        # Use SpooledTemporaryFile - keeps data in memory up to max_size, then spills to disk
+        # This prevents loading huge PDFs entirely into RAM
+        with tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024) as temp_file:  # 10MB threshold
+            # Stream file content in chunks instead of reading all at once
+            while True:
+                chunk = await file.read(STREAM_CHUNK_SIZE)  # 256KB chunks
+                if not chunk:
+                    break
+                temp_file.write(chunk)
+            
+            # Reset file pointer for reading
+            temp_file.seek(0)
+            
+            # Process PDF from temporary file
+            reader = PdfReader(temp_file)
+            
+            # Extract text page by page (don't accumulate all pages)
+            text_parts = []
+            for page_num, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text:
+                    text_parts.append(text)
+                
+                # Check memory every 10 pages for large PDFs
+                if page_num > 0 and page_num % 10 == 0:
+                    logger.info(f"Processed {page_num + 1} pages from PDF")
+            
+            return "\n\n".join(text_parts)
+            
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="PDF support not installed. Install pypdf package.",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to extract text from PDF: {str(e)}",
+        )
+
+
 def extract_text_from_pdf(content: bytes) -> str:
-    """Extract text from PDF file."""
+    """Extract text from PDF file.
+    
+    DEPRECATED: Use extract_text_from_pdf_streaming instead.
+    This function loads entire PDF into memory.
+    """
     try:
         from pypdf import PdfReader
         
@@ -50,7 +109,7 @@ async def upload_document(
     repository: Neo4jRepository = Depends(get_neo4j_repository),
     processor: DocumentProcessor = Depends(get_document_processor),
 ):
-    """Upload and process a document.
+    """Upload and process a document with memory-safe streaming.
     
     Args:
         file: The file to upload
@@ -58,18 +117,48 @@ async def upload_document(
         extract_entities: If True, extracts entities (slow). If False, only creates chunks and embeddings (fast).
     """
     try:
-        # Read file content
-        content = await file.read()
-        
-        # Determine file type and extract text
         filename = file.filename or "untitled"
+        logger.info(f"Receiving file upload: {filename}")
+        
+        # Check file size if available (before reading)
+        if hasattr(file, 'size') and file.size:
+            file_size_mb = file.size / 1024 / 1024
+            if file_size_mb > MAX_FILE_SIZE_MB:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large: {file_size_mb:.1f}MB (max {MAX_FILE_SIZE_MB}MB)",
+                )
+        
+        # Extract text using streaming based on file type
         if filename.lower().endswith('.pdf'):
-            logger.info(f"Processing PDF file: {filename}")
-            text = extract_text_from_pdf(content)
+            logger.info(f"Processing PDF file with streaming: {filename}")
+            text = await extract_text_from_pdf_streaming(file)
         else:
-            # Try to decode as UTF-8 text
+            # For text files, stream in chunks instead of using .read()
+            logger.info(f"Processing text file with streaming: {filename}")
+            text_chunks = []
+            total_size = 0
+            
+            while True:
+                chunk = await file.read(STREAM_CHUNK_SIZE)  # 256KB at a time
+                if not chunk:
+                    break
+                
+                # Check size limit as we stream
+                total_size += len(chunk)
+                if total_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds {MAX_FILE_SIZE_MB}MB limit",
+                    )
+                
+                text_chunks.append(chunk)
+            
+            # Decode all chunks at once (unavoidable for text files)
             try:
-                text = content.decode("utf-8")
+                text = b"".join(text_chunks).decode("utf-8")
+                # Clear chunks from memory immediately
+                del text_chunks
             except UnicodeDecodeError:
                 raise HTTPException(
                     status_code=400,
@@ -88,20 +177,22 @@ async def upload_document(
 
         logger.info(f"Processing document: {doc_title} ({len(text)} characters)")
 
-        # Process document
-        document = await processor.process_text(
+        # Process document (now uses streaming internally)
+        document, chunk_count = await processor.process_text(
             text=text,
             title=doc_title,
             repository=repository,
             source=filename,
             extract_entities=extract_entities,
         )
+        
+        logger.info(f"Document processed successfully: {document.id} with {chunk_count} chunks")
 
         return {
             "document_id": str(document.id),
             "title": document.title,
             "status": "processed",
-            "chunks": len(document.chunks) if hasattr(document, 'chunks') else 0,
+            "chunks": chunk_count,
             "message": "Document uploaded and processed successfully",
         }
 
@@ -125,7 +216,7 @@ async def create_document_from_text(
 ):
     """Create a document from raw text."""
     try:
-        document = await processor.process_text(
+        document, chunk_count = await processor.process_text(
             text=content,
             title=title,
             repository=repository,
@@ -136,6 +227,7 @@ async def create_document_from_text(
             "document_id": str(document.id),
             "title": document.title,
             "status": "processed",
+            "chunks": chunk_count,
             "message": "Document created and processed successfully",
         }
 
