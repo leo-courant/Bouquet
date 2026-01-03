@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStats();
     checkHealth();
     initializeDatabaseControls();
-    initializeAutoCleanup();
+    // initializeAutoCleanup(); // DISABLED: Allow database to persist across sessions
     initializeResizable();
 });
 
@@ -66,6 +66,8 @@ function initializeResizable() {
 }
 
 // Auto-cleanup: Clear database when tab/window closes
+// NOTE: This function is currently DISABLED to allow database persistence
+// To enable auto-cleanup, uncomment the initializeAutoCleanup() call in DOMContentLoaded
 function initializeAutoCleanup() {
     // Clear database on page unload (tab close, browser close, navigation away)
     window.addEventListener('beforeunload', async (event) => {
@@ -121,17 +123,24 @@ async function sendQuery() {
     input.value = '';
 
     // Show loading with animated dots
-    const loadingId = addMessage('🤔 Thinking...', 'assistant', true);
+    const loadingId = addMessage('🤔 Thinking with maximum accuracy...', 'assistant', true);
 
     try {
         const startTime = Date.now();
-        const response = await fetch(`${API_V1}/query`, {
+        // Use ultra-advanced endpoint for maximum accuracy
+        const response = await fetch(`${API_V1}/query/ultra`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 query: query,
                 top_k: 5,
-                include_sources: true
+                include_sources: true,
+                strategy: 'adaptive',
+                use_reranking: true,
+                use_entity_expansion: true,
+                use_community_context: true,
+                max_hops: 2,
+                enable_feedback: true
             })
         });
 
@@ -145,12 +154,44 @@ async function sendQuery() {
         // Remove loading message
         removeMessage(loadingId);
         
-        // Add response with metadata
+        // Add response with enhanced metadata
         let answer = data.answer;
-        if (data.sources && data.sources.length > 0) {
-            answer += `\n\n⏱️ Response time: ${duration}s`;
+        
+        // Add accuracy metadata if available
+        let metadataStr = `⏱️ ${duration}s`;
+        if (data.metadata.confidence !== null && data.metadata.confidence !== undefined) {
+            const confidence = (data.metadata.confidence * 100).toFixed(0);
+            const level = data.metadata.confidence_level || 'UNKNOWN';
+            const confidenceIcon = confidence >= 80 ? '🎯' : confidence >= 60 ? '🎲' : '⚠️';
+            metadataStr += ` | ${confidenceIcon} Confidence: ${confidence}% (${level})`;
         }
-        addMessage(answer, 'assistant', false, data.sources);
+        if (data.metadata.consistency_score !== null && data.metadata.consistency_score !== undefined) {
+            const consistency = (data.metadata.consistency_score * 100).toFixed(0);
+            metadataStr += ` | ✓ Consistency: ${consistency}%`;
+        }
+        if (data.metadata.factuality_score !== null && data.metadata.factuality_score !== undefined) {
+            const factuality = (data.metadata.factuality_score * 100).toFixed(0);
+            metadataStr += ` | ✔️ Factuality: ${factuality}%`;
+        }
+        if (data.metadata.num_conflicts && data.metadata.num_conflicts > 0) {
+            metadataStr += ` | ⚠️ ${data.metadata.num_conflicts} conflicts resolved`;
+        }
+        if (data.metadata.refinement_iterations && data.metadata.refinement_iterations > 1) {
+            metadataStr += ` | 🔄 ${data.metadata.refinement_iterations} refinements`;
+        }
+        if (data.metadata.answer_word_count) {
+            metadataStr += ` | 📝 ${data.metadata.answer_word_count} words`;
+        }
+        if (data.metadata.reason === 'below_similarity_threshold') {
+            metadataStr += ` | ⚠️ Low similarity (max: ${(data.metadata.max_similarity * 100).toFixed(0)}%)`;
+        }
+        
+        if (data.sources && data.sources.length > 0) {
+            answer += `\n\n${metadataStr}`;
+        }
+        
+        // Add message with feedback buttons
+        addMessage(answer, 'assistant', false, data.sources, data.metadata, query);
 
     } catch (error) {
         removeMessage(loadingId);
@@ -159,7 +200,7 @@ async function sendQuery() {
     }
 }
 
-function addMessage(text, type, isLoading = false, sources = null) {
+function addMessage(text, type, isLoading = false, sources = null, metadata = null, query = null) {
     const messagesContainer = document.getElementById('chatMessages');
     const messageDiv = document.createElement('div');
     const messageId = `msg-${Date.now()}-${Math.random()}`;
@@ -173,6 +214,20 @@ function addMessage(text, type, isLoading = false, sources = null) {
         // Preserve line breaks in text
         const formattedText = text.replace(/\n/g, '<br>');
         messageDiv.innerHTML = formattedText;
+        
+        // Add feedback buttons for assistant messages
+        if (type === 'assistant' && metadata && query) {
+            const feedbackDiv = document.createElement('div');
+            feedbackDiv.className = 'feedback-buttons';
+            feedbackDiv.innerHTML = `
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
+                    <span style="font-size: 0.9em; color: #666;">Was this helpful?</span>
+                    <button class="feedback-btn" onclick="submitFeedback('${encodeURIComponent(query)}', ${JSON.stringify(metadata).replace(/'/g, "&apos;")}, 5, true, '👍 Very helpful')">👍 Yes</button>
+                    <button class="feedback-btn" onclick="submitFeedback('${encodeURIComponent(query)}', ${JSON.stringify(metadata).replace(/'/g, "&apos;")}, 2, false, '👎 Not helpful')">👎 No</button>
+                </div>
+            `;
+            messageDiv.appendChild(feedbackDiv);
+        }
         
         // Add sources if available
         if (sources && sources.length > 0) {
@@ -1171,3 +1226,33 @@ function initializeDatabaseControls() {
 
 // Refresh stats periodically
 setInterval(loadStats, 30000); // Every 30 seconds
+
+// Feedback submission
+async function submitFeedback(encodedQuery, metadata, rating, helpful, message) {
+    try {
+        const query = decodeURIComponent(encodedQuery);
+        
+        const response = await fetch(`${API_V1}/query/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: query,
+                rating: rating,
+                helpful: helpful,
+                feedback_text: null,
+                response_metadata: metadata
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // Show brief success message
+        addMessage(`${message} - Thank you for your feedback!`, 'system');
+        
+    } catch (error) {
+        console.error('Feedback submission failed:', error);
+        addMessage(`⚠️ Could not submit feedback: ${error.message}`, 'system');
+    }
+}

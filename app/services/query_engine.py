@@ -21,7 +21,8 @@ class QueryEngine:
         model: str = "gpt-4-turbo-preview",
         top_k: int = 10,
         rerank_top_k: int = 5,
-        max_context_length: int = 4000,
+        max_context_length: int = 8000,
+        min_similarity_threshold: float = 0.7,
     ) -> None:
         """Initialize query engine."""
         self.repository = repository
@@ -31,7 +32,8 @@ class QueryEngine:
         self.top_k = top_k
         self.rerank_top_k = rerank_top_k
         self.max_context_length = max_context_length
-        logger.info(f"Initialized QueryEngine with model: {model}")
+        self.min_similarity_threshold = min_similarity_threshold
+        logger.info(f"Initialized QueryEngine with model: {model}, min_similarity: {min_similarity_threshold}")
 
     async def search(
         self, query: str, top_k: Optional[int] = None, filters: Optional[dict] = None
@@ -120,17 +122,47 @@ class QueryEngine:
             return QueryResponse(
                 answer="I couldn't find any relevant information to answer your question.",
                 sources=[],
-                metadata={"query": query, "total_sources": 0},
+                metadata={"query": query, "total_sources": 0, "reason": "no_results"},
             )
 
+        # Check if results meet minimum similarity threshold
+        high_quality_results = [r for r in search_results if r.score >= self.min_similarity_threshold]
+        
+        if not high_quality_results:
+            logger.warning(f"No results above similarity threshold {self.min_similarity_threshold}")
+            # If threshold is 0, use all results; otherwise return insufficient info
+            if self.min_similarity_threshold > 0:
+                return QueryResponse(
+                    answer="I don't have sufficient information to answer this question accurately. The available information is not relevant enough to provide a reliable answer.",
+                    sources=[],
+                    metadata={
+                        "query": query,
+                        "total_sources": len(search_results),
+                        "reason": "below_similarity_threshold",
+                        "max_similarity": max(r.score for r in search_results) if search_results else 0.0,
+                    },
+                )
+            else:
+                high_quality_results = search_results
+
         # Re-rank results
-        reranked_results = await self.rerank(query, search_results)
+        reranked_results = await self.rerank(query, high_quality_results)
 
         # Build context from top results
         context = self._build_context(reranked_results)
 
         # Generate answer using LLM
         answer = await self._generate_answer(query, context)
+        
+        # Validate answer length
+        word_count = len(answer.split())
+        if word_count < 10:
+            logger.warning(f"Answer too short ({word_count} words), may be incomplete")
+            if "don't" in answer.lower() or "cannot" in answer.lower() or "insufficient" in answer.lower():
+                # It's a legitimate "I don't know" response
+                pass
+            else:
+                logger.error("Suspiciously short answer that's not a proper abstention")
 
         response = QueryResponse(
             answer=answer,
@@ -139,6 +171,7 @@ class QueryEngine:
                 "query": query,
                 "total_sources": len(reranked_results),
                 "context_length": len(context),
+                "answer_word_count": word_count,
             },
         )
 
@@ -151,11 +184,13 @@ class QueryEngine:
 
 Guidelines:
 - Answer the question using ONLY information from the provided context
-- If the context doesn't contain enough information to answer fully, say so
+- If you don't have sufficient information to answer the question, say "I don't have sufficient information to answer this question."
 - Be concise but comprehensive
-- Cite specific sources when possible (e.g., "According to Source 1...")
+- CRITICAL: Every factual claim MUST cite a source using [Source N] format
+- Example: "AI transforms technology [Source 1]. Machine learning enables learning from data [Source 2]."
 - If multiple sources provide relevant information, synthesize them
 - Do not make up information not present in the context
+- Be precise and factual - this is more important than being creative
 """
 
         user_prompt = f"""Context:
@@ -172,8 +207,8 @@ Answer:"""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.3,
-                max_tokens=500,
+                temperature=0.0,
+                max_tokens=1000,
             )
 
             answer = response.choices[0].message.content.strip()

@@ -8,10 +8,15 @@ import tempfile
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from loguru import logger
 
-from app.core import get_document_processor, get_neo4j_repository
+from app.core import (
+    get_document_processor,
+    get_enhanced_document_processor,
+    get_neo4j_repository,
+)
 from app.domain import Document
 from app.repositories import Neo4jRepository
 from app.services import DocumentProcessor
+from app.services.enhanced_document_processor import EnhancedDocumentProcessor
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -200,6 +205,102 @@ async def upload_document(
         raise
     except Exception as e:
         logger.error(f"Error uploading document: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing document: {str(e)}",
+        )
+
+
+@router.post("/upload/enhanced", response_model=None)
+async def upload_document_enhanced(
+    file: UploadFile = File(...),
+    title: Optional[str] = None,
+    extract_entities: bool = True,
+    repository: Neo4jRepository = Depends(get_neo4j_repository),
+    processor: EnhancedDocumentProcessor = Depends(get_enhanced_document_processor),
+):
+    """Upload and process a document with enhanced features (semantic chunking, entity disambiguation, etc.)."""
+    try:
+        filename = file.filename or "untitled"
+        logger.info(f"Enhanced processing file upload: {filename}")
+        
+        # Check file size
+        if hasattr(file, 'size') and file.size:
+            file_size_mb = file.size / 1024 / 1024
+            if file_size_mb > MAX_FILE_SIZE_MB:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large: {file_size_mb:.1f}MB (max {MAX_FILE_SIZE_MB}MB)",
+                )
+        
+        # Extract text using streaming
+        if filename.lower().endswith('.pdf'):
+            text = await extract_text_from_pdf_streaming(file)
+        else:
+            text_chunks = []
+            total_size = 0
+            
+            while True:
+                chunk = await file.read(STREAM_CHUNK_SIZE)
+                if not chunk:
+                    break
+                
+                total_size += len(chunk)
+                if total_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds {MAX_FILE_SIZE_MB}MB limit",
+                    )
+                
+                text_chunks.append(chunk)
+            
+            try:
+                text = b"".join(text_chunks).decode("utf-8")
+                del text_chunks
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File must be a valid UTF-8 text file or PDF",
+                )
+        
+        if not text or not text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No text could be extracted from the file",
+            )
+
+        doc_title = title or filename
+        logger.info(f"Enhanced processing document: {doc_title} ({len(text)} characters)")
+
+        # Process with enhanced processor
+        document, chunk_count = await processor.process_text(
+            text=text,
+            title=doc_title,
+            repository=repository,
+            source=filename,
+            extract_entities=extract_entities,
+        )
+        
+        logger.info(f"Enhanced processing complete: {document.id} with {chunk_count} chunks")
+
+        return {
+            "document_id": str(document.id),
+            "title": document.title,
+            "status": "processed_enhanced",
+            "chunks": chunk_count,
+            "message": "Document uploaded and processed with enhanced features",
+            "features": [
+                "semantic_chunking",
+                "entity_disambiguation",
+                "chunk_relationships",
+                "entity_mentions",
+            ],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in enhanced upload: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error processing document: {str(e)}",
