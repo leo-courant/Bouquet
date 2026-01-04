@@ -14,6 +14,7 @@ from app.core.dependencies import (
     get_neo4j_repository,
     get_query_engine,
     get_ultra_advanced_query_engine,
+    get_query_complexity_analyzer,
 )
 from app.core.logging import setup_logging
 
@@ -33,4 +34,5 @@ __all__ = [
     "get_ultra_advanced_query_engine",
     "get_feedback_service",
     "get_active_learner",
+    "get_query_complexity_analyzer",
 ]

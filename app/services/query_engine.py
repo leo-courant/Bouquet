@@ -25,48 +25,83 @@ class QueryEngine:
         min_similarity_threshold: float = 0.7,
     ) -> None:
         """Initialize query engine."""
-        self.repository = repository
-        self.embedding_service = embedding_service
-        self.client = openai.AsyncOpenAI(api_key=api_key)
-        self.model = model
-        self.top_k = top_k
-        self.rerank_top_k = rerank_top_k
-        self.max_context_length = max_context_length
-        self.min_similarity_threshold = min_similarity_threshold
-        logger.info(f"Initialized QueryEngine with model: {model}, min_similarity: {min_similarity_threshold}")
+        logger.debug(f"[DEBUG] QueryEngine.__init__ called with model={model}, top_k={top_k}, rerank_top_k={rerank_top_k}, min_similarity={min_similarity_threshold}")
+        try:
+            self.repository = repository
+            self.embedding_service = embedding_service
+            self.client = openai.AsyncOpenAI(api_key=api_key)
+            self.model = model
+            self.top_k = top_k
+            self.rerank_top_k = rerank_top_k
+            self.max_context_length = max_context_length
+            self.min_similarity_threshold = min_similarity_threshold
+            logger.info(f"Initialized QueryEngine with model: {model}, min_similarity: {min_similarity_threshold}")
+            logger.debug(f"[DEBUG] QueryEngine initialized successfully")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to initialize QueryEngine: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] QueryEngine.__init__ traceback:")
+            raise
 
     async def search(
         self, query: str, top_k: Optional[int] = None, filters: Optional[dict] = None
     ) -> list[SearchResult]:
         """Semantic search for relevant chunks."""
-        if top_k is None:
-            top_k = self.top_k
+        logger.debug(f"[DEBUG] search called: query='{query[:100]}...', top_k={top_k}, filters={filters}")
+        try:
+            if top_k is None:
+                top_k = self.top_k
 
-        # Generate query embedding
-        query_embedding = await self.embedding_service.generate_embedding(query)
+            # Generate query embedding
+            logger.debug(f"[DEBUG] Generating embedding for query: {query[:50]}...")
+            try:
+                query_embedding = await self.embedding_service.generate_embedding(query)
+                logger.debug(f"[DEBUG] Query embedding generated, dimension={len(query_embedding)}")
+            except Exception as e:
+                logger.error(f"[ERROR] Failed to generate query embedding: {type(e).__name__}: {str(e)}")
+                logger.exception(f"[EXCEPTION] Query embedding generation error:")
+                raise
 
-        # Search for similar chunks
-        chunk_results = await self.repository.search_similar_chunks(query_embedding, top_k)
+            # Search for similar chunks
+            logger.debug(f"[DEBUG] Searching for similar chunks with top_k={top_k}")
+            try:
+                chunk_results = await self.repository.search_similar_chunks(query_embedding, top_k)
+                logger.debug(f"[DEBUG] Found {len(chunk_results)} chunk results")
+            except Exception as e:
+                logger.error(f"[ERROR] Failed to search similar chunks: {type(e).__name__}: {str(e)}")
+                logger.exception(f"[EXCEPTION] Chunk search error:")
+                raise
 
-        # Convert to SearchResult objects
-        search_results = []
-        for chunk, score in chunk_results:
-            # Get entities for this chunk
-            entities = await self.repository.get_entities_for_chunk(chunk.id)
-            entity_names = [e.name for e in entities]
+            # Convert to SearchResult objects
+            search_results = []
+            for idx, (chunk, score) in enumerate(chunk_results):
+                try:
+                    logger.debug(f"[DEBUG] Processing search result {idx+1}/{len(chunk_results)}: chunk_id={chunk.id}, score={score}")
+                    # Get entities for this chunk
+                    entities = await self.repository.get_entities_for_chunk(chunk.id)
+                    entity_names = [e.name for e in entities]
+                    logger.debug(f"[DEBUG] Found {len(entity_names)} entities for chunk {chunk.id}")
 
-            search_result = SearchResult(
-                chunk_id=chunk.id,
-                document_id=chunk.document_id,
-                content=chunk.content,
-                score=score,
-                metadata=chunk.metadata,
-                entities=entity_names,
-            )
-            search_results.append(search_result)
+                    search_result = SearchResult(
+                        chunk_id=chunk.id,
+                        document_id=chunk.document_id,
+                        content=chunk.content,
+                        score=score,
+                        metadata=chunk.metadata,
+                        entities=entity_names,
+                    )
+                    search_results.append(search_result)
+                except Exception as e:
+                    logger.error(f"[ERROR] Failed to process search result {idx+1}: {type(e).__name__}: {str(e)}")
+                    logger.error(f"[ERROR] Chunk details: chunk_id={chunk.id if chunk else 'None'}, score={score}")
+                    logger.exception(f"[EXCEPTION] Search result processing error:")
+                    # Continue with other results
 
-        logger.info(f"Found {len(search_results)} results for query: {query[:50]}...")
-        return search_results
+            logger.info(f"Found {len(search_results)} results for query: {query[:50]}...")
+            return search_results
+        except Exception as e:
+            logger.error(f"[ERROR] Search failed for query '{query[:50]}...': {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] Search error:")
+            raise
 
     async def rerank(
         self, query: str, results: list[SearchResult], top_k: Optional[int] = None
@@ -110,76 +145,109 @@ class QueryEngine:
     ) -> QueryResponse:
         """Query the knowledge graph and generate an answer."""
         logger.info(f"Processing query: {query}")
+        logger.debug(f"[DEBUG] query called: query='{query}', top_k={top_k}, filters={filters}, max_context_length={max_context_length}")
 
-        # Override defaults if provided
-        if max_context_length:
-            self.max_context_length = max_context_length
+        try:
+            # Override defaults if provided
+            if max_context_length:
+                logger.debug(f"[DEBUG] Overriding max_context_length from {self.max_context_length} to {max_context_length}")
+                self.max_context_length = max_context_length
 
-        # Search for relevant chunks
-        search_results = await self.search(query, top_k, filters)
+            # Search for relevant chunks
+            logger.debug(f"[DEBUG] Initiating search for query")
+            search_results = await self.search(query, top_k, filters)
+            logger.debug(f"[DEBUG] Search completed with {len(search_results)} results")
 
-        if not search_results:
-            return QueryResponse(
-                answer="I couldn't find any relevant information to answer your question.",
-                sources=[],
-                metadata={"query": query, "total_sources": 0, "reason": "no_results"},
+            if not search_results:
+                logger.warning(f"[WARNING] No search results found for query: {query[:100]}...")
+                return QueryResponse(
+                    answer="I couldn't find any relevant information to answer your question.",
+                    sources=[],
+                    metadata={"query": query, "total_sources": 0, "reason": "no_results"},
+                )            # Check if results meet minimum similarity threshold
+            high_quality_results = [r for r in search_results if r.score >= self.min_similarity_threshold]
+            logger.debug(f"[DEBUG] Filtered {len(high_quality_results)}/{len(search_results)} results above threshold {self.min_similarity_threshold}")
+            
+            if not high_quality_results:
+                max_score = max(r.score for r in search_results) if search_results else 0.0
+                logger.warning(f"[WARNING] No results above similarity threshold {self.min_similarity_threshold}, max_score={max_score}")
+                # If threshold is 0, use all results; otherwise return insufficient info
+                if self.min_similarity_threshold > 0:
+                    logger.debug(f"[DEBUG] Returning insufficient information response")
+                    return QueryResponse(
+                        answer="I don't have sufficient information to answer this question accurately. The available information is not relevant enough to provide a reliable answer.",
+                        sources=[],
+                        metadata={
+                            "query": query,
+                            "total_sources": len(search_results),
+                            "reason": "below_similarity_threshold",
+                            "max_similarity": max_score,
+                        },
+                    )
+                else:
+                    logger.debug(f"[DEBUG] Threshold is 0, using all results")
+                    high_quality_results = search_results            # Re-rank results
+            logger.debug(f"[DEBUG] Reranking {len(high_quality_results)} results")
+            try:
+                reranked_results = await self.rerank(query, high_quality_results)
+                logger.debug(f"[DEBUG] Reranked to {len(reranked_results)} results")
+            except Exception as e:
+                logger.error(f"[ERROR] Reranking failed: {type(e).__name__}: {str(e)}")
+                logger.exception(f"[EXCEPTION] Reranking error:")
+                raise
+
+            # Build context from top results
+            logger.debug(f"[DEBUG] Building context from {len(reranked_results)} results")
+            try:
+                context = self._build_context(reranked_results)
+                logger.debug(f"[DEBUG] Context built: {len(context)} characters")
+            except Exception as e:
+                logger.error(f"[ERROR] Context building failed: {type(e).__name__}: {str(e)}")
+                logger.exception(f"[EXCEPTION] Context building error:")
+                raise
+
+            # Generate answer using LLM
+            logger.debug(f"[DEBUG] Generating answer with LLM model {self.model}")
+            try:
+                answer = await self._generate_answer(query, context)
+                logger.debug(f"[DEBUG] Answer generated: {len(answer)} characters")
+            except Exception as e:
+                logger.error(f"[ERROR] Answer generation failed: {type(e).__name__}: {str(e)}")
+                logger.exception(f"[EXCEPTION] Answer generation error:")
+                raise            # Validate answer length
+            word_count = len(answer.split())
+            logger.debug(f"[DEBUG] Answer validation: word_count={word_count}")
+            if word_count < 10:
+                logger.warning(f"[WARNING] Answer too short ({word_count} words), may be incomplete")
+                if "don't" in answer.lower() or "cannot" in answer.lower() or "insufficient" in answer.lower():
+                    # It's a legitimate "I don't know" response
+                    logger.debug(f"[DEBUG] Short answer is legitimate abstention")
+                    pass
+                else:
+                    logger.error(f"[ERROR] Suspiciously short answer that's not a proper abstention: '{answer}'")
+
+            response = QueryResponse(
+                answer=answer,
+                sources=reranked_results,
+                metadata={
+                    "query": query,
+                    "total_sources": len(reranked_results),
+                    "context_length": len(context),
+                    "answer_word_count": word_count,
+                },
             )
 
-        # Check if results meet minimum similarity threshold
-        high_quality_results = [r for r in search_results if r.score >= self.min_similarity_threshold]
-        
-        if not high_quality_results:
-            logger.warning(f"No results above similarity threshold {self.min_similarity_threshold}")
-            # If threshold is 0, use all results; otherwise return insufficient info
-            if self.min_similarity_threshold > 0:
-                return QueryResponse(
-                    answer="I don't have sufficient information to answer this question accurately. The available information is not relevant enough to provide a reliable answer.",
-                    sources=[],
-                    metadata={
-                        "query": query,
-                        "total_sources": len(search_results),
-                        "reason": "below_similarity_threshold",
-                        "max_similarity": max(r.score for r in search_results) if search_results else 0.0,
-                    },
-                )
-            else:
-                high_quality_results = search_results
-
-        # Re-rank results
-        reranked_results = await self.rerank(query, high_quality_results)
-
-        # Build context from top results
-        context = self._build_context(reranked_results)
-
-        # Generate answer using LLM
-        answer = await self._generate_answer(query, context)
-        
-        # Validate answer length
-        word_count = len(answer.split())
-        if word_count < 10:
-            logger.warning(f"Answer too short ({word_count} words), may be incomplete")
-            if "don't" in answer.lower() or "cannot" in answer.lower() or "insufficient" in answer.lower():
-                # It's a legitimate "I don't know" response
-                pass
-            else:
-                logger.error("Suspiciously short answer that's not a proper abstention")
-
-        response = QueryResponse(
-            answer=answer,
-            sources=reranked_results,
-            metadata={
-                "query": query,
-                "total_sources": len(reranked_results),
-                "context_length": len(context),
-                "answer_word_count": word_count,
-            },
-        )
-
-        logger.info(f"Generated answer with {len(reranked_results)} sources")
-        return response
+            logger.info(f"Generated answer with {len(reranked_results)} sources")
+            logger.debug(f"[DEBUG] Query completed successfully")
+            return response
+        except Exception as e:
+            logger.error(f"[ERROR] Query failed for '{query[:50]}...': {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] Query error traceback:")
+            raise
 
     async def _generate_answer(self, query: str, context: str) -> str:
         """Generate answer using LLM with retrieved context."""
+        logger.debug(f"[DEBUG] _generate_answer called: query_length={len(query)}, context_length={len(context)}")
         system_prompt = """You are a helpful AI assistant that answers questions based on the provided context.
 
 Guidelines:
@@ -201,6 +269,7 @@ Question: {query}
 Answer:"""
 
         try:
+            logger.debug(f"[DEBUG] Sending request to OpenAI model {self.model}")
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -212,11 +281,18 @@ Answer:"""
             )
 
             answer = response.choices[0].message.content.strip()
+            logger.debug(f"[DEBUG] LLM response received: answer_length={len(answer)}, finish_reason={response.choices[0].finish_reason}")
             logger.debug(f"Generated answer: {answer[:100]}...")
             return answer
 
+        except openai.APIError as e:
+            logger.error(f"[ERROR] OpenAI API error: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Error details: status_code={getattr(e, 'status_code', 'N/A')}, type={getattr(e, 'type', 'N/A')}")
+            logger.exception(f"[EXCEPTION] OpenAI API error:")
+            return "I encountered an API error while generating the answer. Please try again."
         except Exception as e:
-            logger.error(f"Error generating answer: {e}")
+            logger.error(f"[ERROR] Unexpected error generating answer: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] Answer generation error:")
             return "I encountered an error while generating the answer. Please try again."
 
     async def get_related_entities(self, entity_name: str, max_hops: int = 2) -> list[dict]:

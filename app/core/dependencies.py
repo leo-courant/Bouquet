@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import AsyncGenerator
 
 from fastapi import Depends
+from loguru import logger
 
 from app.core.config import Settings, get_settings
 from app.repositories.neo4j_repository import Neo4jRepository
@@ -31,6 +32,11 @@ from app.services.rag_evaluator import RAGEvaluator
 from app.services.self_consistency import SelfConsistencyService
 from app.services.temporal_ranker import TemporalRanker
 from app.services.ultra_advanced_query_engine import UltraAdvancedQueryEngine
+from app.services.cross_document_synthesizer import CrossDocumentSynthesizer
+from app.services.comparative_analyzer import ComparativeAnalyzer
+from app.services.reasoning_chain_builder import ReasoningChainBuilder
+from app.services.citation_validator import CitationValidator
+from app.services.query_complexity_analyzer import QueryComplexityAnalyzer
 
 
 # Caching instances
@@ -60,40 +66,62 @@ def get_query_cache() -> QueryCache:
 
 async def get_neo4j_repository() -> AsyncGenerator[Neo4jRepository, None]:
     """Get Neo4j repository instance."""
-    settings = get_settings()
-    repository = Neo4jRepository(
-        uri=settings.neo4j_uri,
-        user=settings.neo4j_user,
-        password=settings.neo4j_password,
-        database=settings.neo4j_database,
-    )
-    await repository.connect()
-    
-    # Create vector indexes if enabled
-    if settings.use_hnsw_index:
-        try:
-            await repository.create_vector_index(embedding_dimension=1536)
-            await repository.create_community_vector_index(embedding_dimension=1536)
-        except Exception as e:
-            # Non-critical, just log
-            pass
-    
+    logger.debug(f"[DEBUG] get_neo4j_repository called")
     try:
-        yield repository
-    finally:
-        await repository.close()
+        settings = get_settings()
+        logger.debug(f"[DEBUG] Creating Neo4jRepository with uri={settings.neo4j_uri}")
+        repository = Neo4jRepository(
+            uri=settings.neo4j_uri,
+            user=settings.neo4j_user,
+            password=settings.neo4j_password,
+            database=settings.neo4j_database,
+        )
+        logger.debug(f"[DEBUG] Connecting to Neo4j")
+        await repository.connect()
+        logger.debug(f"[DEBUG] Neo4j connected successfully")
+        
+        # Create vector indexes if enabled
+        if settings.use_hnsw_index:
+            try:
+                logger.debug(f"[DEBUG] Creating HNSW vector indexes")
+                await repository.create_vector_index(embedding_dimension=1536)
+                await repository.create_community_vector_index(embedding_dimension=1536)
+                logger.debug(f"[DEBUG] Vector indexes created successfully")
+            except Exception as e:
+                # Non-critical, just log
+                logger.warning(f"[WARNING] Failed to create vector indexes: {type(e).__name__}: {str(e)}")
+                pass
+        
+        try:
+            yield repository
+        finally:
+            logger.debug(f"[DEBUG] Closing Neo4j repository")
+            await repository.close()
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to get Neo4j repository: {type(e).__name__}: {str(e)}")
+        logger.exception(f"[EXCEPTION] Neo4j repository error:")
+        raise
 
 
 async def get_embedding_service() -> EmbeddingService:
     """Get embedding service instance with caching."""
-    settings = get_settings()
-    embedding_cache = get_embedding_cache() if settings.enable_embedding_cache else None
-    return EmbeddingService(
-        api_key=settings.openai_api_key,
-        model=settings.openai_embedding_model,
-        embedding_cache=embedding_cache,
-        dimensions=1536,  # Use 1536 dimensions to stay within Neo4j's 2048 limit
-    )
+    logger.debug(f"[DEBUG] get_embedding_service called")
+    try:
+        settings = get_settings()
+        embedding_cache = get_embedding_cache() if settings.enable_embedding_cache else None
+        logger.debug(f"[DEBUG] Creating EmbeddingService with model={settings.openai_embedding_model}, cache={'enabled' if embedding_cache else 'disabled'}")
+        service = EmbeddingService(
+            api_key=settings.openai_api_key,
+            model=settings.openai_embedding_model,
+            embedding_cache=embedding_cache,
+            dimensions=1536,  # Use 1536 dimensions to stay within Neo4j's 2048 limit
+        )
+        logger.debug(f"[DEBUG] EmbeddingService created successfully")
+        return service
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to get embedding service: {type(e).__name__}: {str(e)}")
+        logger.exception(f"[EXCEPTION] Embedding service error:")
+        raise
 
 
 async def get_entity_extractor() -> EntityExtractor:
@@ -213,7 +241,7 @@ async def get_advanced_query_engine(
     
     query_cache = None
     if settings.enable_query_cache:
-        query_cache = await get_query_cache()
+        query_cache = get_query_cache()
 
     return AdvancedQueryEngine(
         repository=repository,
@@ -359,6 +387,51 @@ def get_active_learner() -> ActiveLearner:
     )
 
 
+async def get_query_complexity_analyzer(
+    repository: Neo4jRepository = Depends(get_neo4j_repository),
+) -> QueryComplexityAnalyzer:
+    """Get query complexity analyzer instance."""
+    return QueryComplexityAnalyzer(
+        repository=repository,
+    )
+
+
+async def get_cross_document_synthesizer() -> CrossDocumentSynthesizer:
+    """Get cross-document synthesizer instance."""
+    settings = get_settings()
+    return CrossDocumentSynthesizer(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+    )
+
+
+async def get_comparative_analyzer() -> ComparativeAnalyzer:
+    """Get comparative analyzer instance."""
+    settings = get_settings()
+    return ComparativeAnalyzer(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+    )
+
+
+async def get_reasoning_chain_builder() -> ReasoningChainBuilder:
+    """Get reasoning chain builder instance."""
+    settings = get_settings()
+    return ReasoningChainBuilder(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+    )
+
+
+async def get_citation_validator() -> CitationValidator:
+    """Get citation validator instance."""
+    settings = get_settings()
+    return CitationValidator(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+    )
+
+
 async def get_ultra_advanced_query_engine(
     repository: Neo4jRepository = Depends(get_neo4j_repository),
 ) -> UltraAdvancedQueryEngine:
@@ -420,6 +493,23 @@ async def get_ultra_advanced_query_engine(
     if settings.enable_active_learning:
         active_learner = get_active_learner()
     
+    # Complex reasoning services
+    cross_document_synthesizer = None
+    if settings.enable_cross_document_synthesis:
+        cross_document_synthesizer = await get_cross_document_synthesizer()
+    
+    comparative_analyzer = None
+    if settings.enable_comparative_analysis:
+        comparative_analyzer = await get_comparative_analyzer()
+    
+    reasoning_chain_builder = None
+    if settings.enable_reasoning_chains:
+        reasoning_chain_builder = await get_reasoning_chain_builder()
+    
+    citation_validator = None
+    if settings.enable_citation_validation:
+        citation_validator = await get_citation_validator()
+    
     return UltraAdvancedQueryEngine(
         repository=repository,
         embedding_service=embedding_service,
@@ -446,4 +536,8 @@ async def get_ultra_advanced_query_engine(
         query_intent_classifier=query_intent_classifier,
         iterative_refiner=iterative_refiner,
         active_learner=active_learner,
+        cross_document_synthesizer=cross_document_synthesizer,
+        comparative_analyzer=comparative_analyzer,
+        reasoning_chain_builder=reasoning_chain_builder,
+        citation_validator=citation_validator,
     )

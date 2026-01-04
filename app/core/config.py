@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     top_k_retrieval: int = Field(default=10, alias="TOP_K_RETRIEVAL")
     rerank_top_k: int = Field(default=5, alias="RERANK_TOP_K")
     max_context_length: int = Field(default=8000, alias="MAX_CONTEXT_LENGTH")
-    min_similarity_threshold: float = Field(default=0.0, alias="MIN_SIMILARITY_THRESHOLD")  # 0.0 = return top_k results regardless of similarity
+    min_similarity_threshold: float = Field(default=0.7, alias="MIN_SIMILARITY_THRESHOLD")  # 0.7 = require decent similarity, 0.0 = return top_k regardless
     
     # Advanced Retrieval Settings
     use_hnsw_index: bool = Field(default=True, alias="USE_HNSW_INDEX")
@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     
     enable_active_learning: bool = Field(default=True, alias="ENABLE_ACTIVE_LEARNING")
     learning_rate: float = Field(default=0.01, alias="LEARNING_RATE")
+    
+    # Complex reasoning features
+    enable_cross_document_synthesis: bool = Field(default=True, alias="ENABLE_CROSS_DOCUMENT_SYNTHESIS")
+    enable_comparative_analysis: bool = Field(default=True, alias="ENABLE_COMPARATIVE_ANALYSIS")
+    enable_reasoning_chains: bool = Field(default=True, alias="ENABLE_REASONING_CHAINS")
+    enable_citation_validation: bool = Field(default=True, alias="ENABLE_CITATION_VALIDATION")
+    citation_validation_threshold: float = Field(default=0.8, alias="CITATION_VALIDATION_THRESHOLD")
 
     # API
     api_v1_prefix: str = "/api/v1"

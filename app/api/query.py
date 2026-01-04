@@ -14,6 +14,7 @@ from app.core import (
     get_query_engine,
     get_ultra_advanced_query_engine,
     get_active_learner,
+    get_query_complexity_analyzer,
 )
 from app.domain import QueryRequest, QueryResponse, SearchRequest, SearchResponse
 from app.domain.query import FeedbackRequest, RetrievalStrategy, QueryType, SubQuery
@@ -23,6 +24,7 @@ from app.services.advanced_query_engine import AdvancedQueryEngine
 from app.services.ultra_advanced_query_engine import UltraAdvancedQueryEngine
 from app.services.feedback_service import FeedbackService
 from app.services.active_learner import ActiveLearner
+from app.services.query_complexity_analyzer import QueryComplexityAnalyzer
 
 router = APIRouter(prefix="/query", tags=["query"])
 
@@ -33,22 +35,28 @@ async def query(
     query_engine: QueryEngine = Depends(get_query_engine),
 ) -> QueryResponse:
     """Ask a question and get an AI-generated answer with sources (legacy endpoint)."""
+    logger.debug(f"[DEBUG] query endpoint called: query='{request.query[:100]}...', top_k={request.top_k}, include_sources={request.include_sources}")
     try:
+        logger.debug(f"[DEBUG] Calling query_engine.query")
         response = await query_engine.query(
             query=request.query,
             top_k=request.top_k,
             filters=request.filters,
             max_context_length=request.max_context_length,
         )
+        logger.debug(f"[DEBUG] Query completed successfully, sources={len(response.sources)}")
 
         # Optionally exclude sources if requested
         if not request.include_sources:
+            logger.debug(f"[DEBUG] Excluding sources from response as requested")
             response.sources = []
 
         return response
 
     except Exception as e:
-        logger.error(f"Error processing query: {e}")
+        logger.error(f"[ERROR] Query endpoint failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"[ERROR] Query details: query='{request.query[:100]}...', top_k={request.top_k}")
+        logger.exception(f"[EXCEPTION] Query endpoint error:")
         raise HTTPException(
             status_code=500,
             detail=f"Error processing query: {str(e)}",
@@ -61,7 +69,9 @@ async def advanced_query(
     query_engine: AdvancedQueryEngine = Depends(get_advanced_query_engine),
 ) -> QueryResponse:
     """Ask a question using advanced retrieval strategies."""
+    logger.debug(f"[DEBUG] advanced_query endpoint called: query='{request.query[:100]}...', strategy={request.strategy}, use_reranking={request.use_reranking}")
     try:
+        logger.debug(f"[DEBUG] Advanced query params: entity_expansion={request.use_entity_expansion}, community_context={request.use_community_context}, max_hops={request.max_hops}")
         response = await query_engine.query(
             query=request.query,
             top_k=request.top_k,
@@ -72,15 +82,19 @@ async def advanced_query(
             max_hops=request.max_hops,
             enable_feedback=request.enable_feedback,
         )
+        logger.debug(f"[DEBUG] Advanced query completed successfully, sources={len(response.sources)}")
 
         # Optionally exclude sources if requested
         if not request.include_sources:
+            logger.debug(f"[DEBUG] Excluding sources from response")
             response.sources = []
 
         return response
 
     except Exception as e:
-        logger.error(f"Error processing advanced query: {e}")
+        logger.error(f"[ERROR] Advanced query endpoint failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"[ERROR] Query details: query='{request.query[:100]}...', strategy={request.strategy}")
+        logger.exception(f"[EXCEPTION] Advanced query error:")
         raise HTTPException(
             status_code=500,
             detail=f"Error processing advanced query: {str(e)}",
@@ -273,6 +287,84 @@ async def stream_query(
         raise HTTPException(
             status_code=500,
             detail=f"Error streaming query: {str(e)}",
+        )
+
+
+@router.post("/smart", response_model=QueryResponse)
+async def smart_query(
+    request: QueryRequest,
+    advanced_engine: AdvancedQueryEngine = Depends(get_advanced_query_engine),
+    ultra_engine: UltraAdvancedQueryEngine = Depends(get_ultra_advanced_query_engine),
+    complexity_analyzer: QueryComplexityAnalyzer = Depends(get_query_complexity_analyzer),
+) -> QueryResponse:
+    """
+    Intelligently route query to appropriate engine based on complexity analysis.
+    
+    This endpoint analyzes:
+    - Database size and structure
+    - Query complexity
+    - Initial retrieval quality
+    
+    Then routes to either advanced or ultra-advanced engine for optimal performance.
+    """
+    try:
+        logger.info(f"Smart routing query: {request.query[:100]}...")
+        
+        # Analyze if ultra-advanced processing is needed
+        decision = await complexity_analyzer.should_use_ultra_advanced(
+            query=request.query,
+            entities=None,  # Could extract entities here if needed
+            initial_retrieval_quality=None,  # First pass doesn't have this
+        )
+        
+        logger.info(
+            f"Routing decision: use_ultra={decision['use_ultra']}, "
+            f"confidence={decision['confidence']:.2f}, "
+            f"reasoning={', '.join(decision['reasoning'])}"
+        )
+        
+        # Route to appropriate engine
+        if decision['use_ultra']:
+            logger.info("Routing to ultra-advanced query engine")
+            response = await ultra_engine.query(
+                query=request.query,
+                top_k=request.top_k,
+                strategy=request.strategy,
+                use_reranking=request.use_reranking,
+                use_entity_expansion=request.use_entity_expansion,
+                use_community_context=request.use_community_context,
+                max_hops=request.max_hops,
+                enable_feedback=request.enable_feedback,
+            )
+            response.metadata['engine_used'] = 'ultra_advanced'
+        else:
+            logger.info("Routing to advanced query engine")
+            response = await advanced_engine.query(
+                query=request.query,
+                top_k=request.top_k,
+                strategy=request.strategy,
+                use_reranking=request.use_reranking,
+                use_entity_expansion=request.use_entity_expansion,
+                use_community_context=request.use_community_context,
+                max_hops=request.max_hops,
+                enable_feedback=request.enable_feedback,
+            )
+            response.metadata['engine_used'] = 'advanced'
+        
+        # Add routing metadata
+        response.metadata['routing_decision'] = decision
+        
+        # Optionally exclude sources if requested
+        if not request.include_sources:
+            response.sources = []
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error in smart query routing: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing smart query: {str(e)}",
         )
 
 

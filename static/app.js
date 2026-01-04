@@ -123,24 +123,24 @@ async function sendQuery() {
     input.value = '';
 
     // Show loading with animated dots
-    const loadingId = addMessage('🤔 Thinking with maximum accuracy...', 'assistant', true);
+    const loadingId = addMessage('🤔 Analyzing your question...', 'assistant', true);
 
     try {
         const startTime = Date.now();
-        // Use ultra-advanced endpoint for maximum accuracy
-        const response = await fetch(`${API_V1}/query/ultra`, {
+        // Use advanced endpoint for fast queries
+        const response = await fetch(`${API_V1}/query/advanced`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 query: query,
-                top_k: 5,
+                top_k: 3,
                 include_sources: true,
-                strategy: 'adaptive',
-                use_reranking: true,
-                use_entity_expansion: true,
-                use_community_context: true,
-                max_hops: 2,
-                enable_feedback: true
+                strategy: 'hybrid',
+                use_reranking: false,
+                use_entity_expansion: false,
+                use_community_context: false,
+                max_hops: 1,
+                enable_feedback: false
             })
         });
 

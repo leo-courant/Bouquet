@@ -40,24 +40,42 @@ class Neo4jRepository:
         database: str = "neo4j",
     ) -> None:
         """Initialize Neo4j repository."""
-        self.uri = uri
-        self.user = user
-        self.password = password
-        self.database = database
-        self._driver: Optional[AsyncDriver] = None
+        logger.debug(f"[DEBUG] Neo4jRepository.__init__ called: uri={uri}, user={user}, database={database}")
+        try:
+            self.uri = uri
+            self.user = user
+            self.password = password
+            self.database = database
+            self._driver: Optional[AsyncDriver] = None
+            logger.debug(f"[DEBUG] Neo4jRepository initialized (connection not yet established)")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to initialize Neo4jRepository: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] Neo4jRepository.__init__ traceback:")
+            raise
 
     async def connect(self) -> None:
         """Establish connection to Neo4j."""
+        logger.debug(f"[DEBUG] Attempting to connect to Neo4j at {self.uri}")
         try:
+            logger.debug(f"[DEBUG] Creating AsyncGraphDatabase driver")
             self._driver = AsyncGraphDatabase.driver(
                 self.uri,
                 auth=(self.user, self.password),
             )
+            logger.debug(f"[DEBUG] Verifying Neo4j connectivity")
             await self._driver.verify_connectivity()
             logger.info(f"Connected to Neo4j at {self.uri}")
+            logger.debug(f"[DEBUG] Creating indexes")
             await self._create_indexes()
+            logger.debug(f"[DEBUG] Neo4j connection established successfully")
         except ServiceUnavailable as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
+            logger.error(f"[ERROR] Neo4j service unavailable at {self.uri}: {str(e)}")
+            logger.error(f"[ERROR] Check if Neo4j is running and accessible")
+            logger.exception(f"[EXCEPTION] Neo4j connection error:")
+            raise
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to connect to Neo4j at {self.uri}: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] Neo4j connection error:")
             raise
 
     async def close(self) -> None:
@@ -157,54 +175,63 @@ class Neo4jRepository:
     # Document Operations
     async def create_document(self, document: Document) -> Document:
         """Create a new document node."""
-        # Build query conditionally based on metadata
-        if document.metadata and len(document.metadata) > 0:
-            query = """
-            CREATE (d:Document {
-                id: $id,
-                title: $title,
-                content: $content,
-                source: $source,
-                created_at: datetime($created_at),
-                updated_at: datetime($updated_at),
-                metadata: $metadata
-            })
-            RETURN d
-            """
-            params = {
-                "id": str(document.id),
-                "title": document.title,
-                "content": document.content,
-                "source": document.source,
-                "created_at": document.created_at.isoformat(),
-                "updated_at": document.updated_at.isoformat(),
-                "metadata": json.dumps(document.metadata),  # Convert to JSON string
-            }
-        else:
-            query = """
-            CREATE (d:Document {
-                id: $id,
-                title: $title,
-                content: $content,
-                source: $source,
-                created_at: datetime($created_at),
-                updated_at: datetime($updated_at)
-            })
-            RETURN d
-            """
-            params = {
-                "id": str(document.id),
-                "title": document.title,
-                "content": document.content,
-                "source": document.source,
-                "created_at": document.created_at.isoformat(),
-                "updated_at": document.updated_at.isoformat(),
-            }
+        logger.debug(f"[DEBUG] create_document called: document_id={document.id}, title={document.title}")
+        try:
+            # Build query conditionally based on metadata
+            if document.metadata and len(document.metadata) > 0:
+                query = """
+                CREATE (d:Document {
+                    id: $id,
+                    title: $title,
+                    content: $content,
+                    source: $source,
+                    created_at: datetime($created_at),
+                    updated_at: datetime($updated_at),
+                    metadata: $metadata
+                })
+                RETURN d
+                """
+                params = {
+                    "id": str(document.id),
+                    "title": document.title,
+                    "content": document.content,
+                    "source": document.source,
+                    "created_at": document.created_at.isoformat(),
+                    "updated_at": document.updated_at.isoformat(),
+                    "metadata": json.dumps(document.metadata),  # Convert to JSON string
+                }
+            else:
+                query = """
+                CREATE (d:Document {
+                    id: $id,
+                    title: $title,
+                    content: $content,
+                    source: $source,
+                    created_at: datetime($created_at),
+                    updated_at: datetime($updated_at)
+                })
+                RETURN d
+                """
+                params = {
+                    "id": str(document.id),
+                    "title": document.title,
+                    "content": document.content,
+                    "source": document.source,
+                    "created_at": document.created_at.isoformat(),
+                    "updated_at": document.updated_at.isoformat(),
+                }
 
-        async with self._driver.session(database=self.database) as session:
-            await session.run(query, params)
-            logger.info(f"Created document: {document.id}")
-            return document
+            logger.debug(f"[DEBUG] Executing Neo4j query to create document")
+            async with self._driver.session(database=self.database) as session:
+                await session.run(query, params)
+                logger.info(f"Created document: {document.id}")
+                logger.debug(f"[DEBUG] Document created successfully in Neo4j")
+                return document
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to create document {document.id}: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Document details: title={document.title}, content_length={len(document.content)}")
+            logger.exception(f"[EXCEPTION] Document creation error:")
+            raise
 
     async def get_document(self, document_id: UUID) -> Optional[Document]:
         """Get a document by ID."""
@@ -250,69 +277,87 @@ class Neo4jRepository:
     # Chunk Operations
     async def create_chunk(self, chunk: Chunk) -> Chunk:
         """Create a new chunk node and link to document."""
-        # Build query conditionally based on metadata
-        if chunk.metadata and len(chunk.metadata) > 0:
-            query = """
-            MATCH (d:Document {id: $document_id})
-            CREATE (c:Chunk {
-                id: $id,
-                content: $content,
-                chunk_index: $chunk_index,
-                start_char: $start_char,
-                end_char: $end_char,
-                created_at: datetime($created_at),
-                metadata: $metadata
-            })
-            CREATE (d)-[:HAS_CHUNK]->(c)
-            RETURN c
-            """
-            params = {
-                "id": str(chunk.id),
-                "document_id": str(chunk.document_id),
-                "content": chunk.content,
-                "chunk_index": chunk.chunk_index,
-                "start_char": chunk.start_char,
-                "end_char": chunk.end_char,
-                "created_at": chunk.created_at.isoformat(),
-                "metadata": json.dumps(chunk.metadata),  # Convert to JSON string
-            }
-        else:
-            query = """
-            MATCH (d:Document {id: $document_id})
-            CREATE (c:Chunk {
-                id: $id,
-                content: $content,
-                chunk_index: $chunk_index,
-                start_char: $start_char,
-                end_char: $end_char,
-                created_at: datetime($created_at)
-            })
-            CREATE (d)-[:HAS_CHUNK]->(c)
-            RETURN c
-            """
-            params = {
-                "id": str(chunk.id),
-                "document_id": str(chunk.document_id),
-                "content": chunk.content,
-                "chunk_index": chunk.chunk_index,
-                "start_char": chunk.start_char,
-                "end_char": chunk.end_char,
-                "created_at": chunk.created_at.isoformat(),
-            }
+        logger.debug(f"[DEBUG] create_chunk called: chunk_id={chunk.id}, document_id={chunk.document_id}, index={chunk.chunk_index}")
+        try:
+            # Build query conditionally based on metadata
+            if chunk.metadata and len(chunk.metadata) > 0:
+                query = """
+                MATCH (d:Document {id: $document_id})
+                CREATE (c:Chunk {
+                    id: $id,
+                    content: $content,
+                    chunk_index: $chunk_index,
+                    start_char: $start_char,
+                    end_char: $end_char,
+                    created_at: datetime($created_at),
+                    metadata: $metadata
+                })
+                CREATE (d)-[:HAS_CHUNK]->(c)
+                RETURN c
+                """
+                params = {
+                    "id": str(chunk.id),
+                    "document_id": str(chunk.document_id),
+                    "content": chunk.content,
+                    "chunk_index": chunk.chunk_index,
+                    "start_char": chunk.start_char,
+                    "end_char": chunk.end_char,
+                    "created_at": chunk.created_at.isoformat(),
+                    "metadata": json.dumps(chunk.metadata),  # Convert to JSON string
+                }
+            else:
+                query = """
+                MATCH (d:Document {id: $document_id})
+                CREATE (c:Chunk {
+                    id: $id,
+                    content: $content,
+                    chunk_index: $chunk_index,
+                    start_char: $start_char,
+                    end_char: $end_char,
+                    created_at: datetime($created_at)
+                })
+                CREATE (d)-[:HAS_CHUNK]->(c)
+                RETURN c
+                """
+                params = {
+                    "id": str(chunk.id),
+                    "document_id": str(chunk.document_id),
+                    "content": chunk.content,
+                    "chunk_index": chunk.chunk_index,
+                    "start_char": chunk.start_char,
+                    "end_char": chunk.end_char,
+                    "created_at": chunk.created_at.isoformat(),
+                }
 
-        async with self._driver.session(database=self.database) as session:
-            await session.run(query, params)
-            logger.debug(f"Created chunk: {chunk.id}")
-            return chunk
+            logger.debug(f"[DEBUG] Executing Neo4j query to create chunk")
+            async with self._driver.session(database=self.database) as session:
+                await session.run(query, params)
+                logger.debug(f"Created chunk: {chunk.id}")
+                logger.debug(f"[DEBUG] Chunk created successfully in Neo4j")
+                return chunk
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to create chunk {chunk.id}: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Chunk details: document_id={chunk.document_id}, index={chunk.chunk_index}, content_length={len(chunk.content)}")
+            logger.exception(f"[EXCEPTION] Chunk creation error:")
+            raise
 
     async def set_chunk_embedding(self, chunk_id: UUID, embedding: list[float]) -> None:
         """Set embedding vector for a chunk."""
-        query = """
-        MATCH (c:Chunk {id: $id})
-        SET c.embedding = $embedding
-        """
-        async with self._driver.session(database=self.database) as session:
-            await session.run(query, {"id": str(chunk_id), "embedding": embedding})
+        logger.debug(f"[DEBUG] set_chunk_embedding called: chunk_id={chunk_id}, embedding_dim={len(embedding)}")
+        try:
+            query = """
+            MATCH (c:Chunk {id: $id})
+            SET c.embedding = $embedding
+            """
+            logger.debug(f"[DEBUG] Executing Neo4j query to set embedding")
+            async with self._driver.session(database=self.database) as session:
+                await session.run(query, {"id": str(chunk_id), "embedding": embedding})
+                logger.debug(f"[DEBUG] Embedding set successfully for chunk {chunk_id}")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to set embedding for chunk {chunk_id}: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Embedding dimension: {len(embedding)}")
+            logger.exception(f"[EXCEPTION] Set embedding error:")
+            raise
 
     async def get_chunk(self, chunk_id: UUID) -> Optional[Chunk]:
         """Get a chunk by ID."""
@@ -344,57 +389,66 @@ class Neo4jRepository:
     # Entity Operations
     async def create_entity(self, entity: Entity) -> Entity:
         """Create or merge an entity node."""
-        # Build query conditionally based on metadata
-        if entity.metadata and len(entity.metadata) > 0:
-            query = """
-            MERGE (e:Entity {name: $name, entity_type: $entity_type})
-            ON CREATE SET 
-                e.id = $id,
-                e.description = $description,
-                e.metadata = $metadata
-            ON MATCH SET
-                e.description = COALESCE($description, e.description),
-                e.metadata = COALESCE($metadata, e.metadata)
-            RETURN e
-            """
-            params = {
-                "id": str(entity.id),
-                "name": entity.name,
-                "entity_type": entity.entity_type,
-                "description": entity.description,
-                "metadata": json.dumps(entity.metadata),  # Convert to JSON string
-            }
-        else:
-            query = """
-            MERGE (e:Entity {name: $name, entity_type: $entity_type})
-            ON CREATE SET 
-                e.id = $id,
-                e.description = $description
-            ON MATCH SET
-                e.description = COALESCE($description, e.description)
-            RETURN e
-            """
-            params = {
-                "id": str(entity.id),
-                "name": entity.name,
-                "entity_type": entity.entity_type,
-                "description": entity.description,
-            }
+        logger.debug(f"[DEBUG] create_entity called: name={entity.name}, type={entity.entity_type}, id={entity.id}")
+        try:
+            # Build query conditionally based on metadata
+            if entity.metadata and len(entity.metadata) > 0:
+                query = """
+                MERGE (e:Entity {name: $name, entity_type: $entity_type})
+                ON CREATE SET 
+                    e.id = $id,
+                    e.description = $description,
+                    e.metadata = $metadata
+                ON MATCH SET
+                    e.description = COALESCE($description, e.description),
+                    e.metadata = COALESCE($metadata, e.metadata)
+                RETURN e
+                """
+                params = {
+                    "id": str(entity.id),
+                    "name": entity.name,
+                    "entity_type": entity.entity_type,
+                    "description": entity.description,
+                    "metadata": json.dumps(entity.metadata),  # Convert to JSON string
+                }
+            else:
+                query = """
+                MERGE (e:Entity {name: $name, entity_type: $entity_type})
+                ON CREATE SET 
+                    e.id = $id,
+                    e.description = $description
+                ON MATCH SET
+                    e.description = COALESCE($description, e.description)
+                RETURN e
+                """
+                params = {
+                    "id": str(entity.id),
+                    "name": entity.name,
+                    "entity_type": entity.entity_type,
+                    "description": entity.description,
+                }
 
-        async with self._driver.session(database=self.database) as session:
-            result = await session.run(query, params)
-            record = await result.single()
-            node = record["e"]
-            metadata_str = node.get("metadata", "{}")
-            metadata = json.loads(metadata_str) if metadata_str else {}
-            logger.debug(f"Created/merged entity: {entity.name}")
-            return Entity(
-                id=UUID(node["id"]),
-                name=node["name"],
-                entity_type=node["entity_type"],
-                description=node.get("description"),
-                metadata=metadata,
-            )
+            logger.debug(f"[DEBUG] Executing Neo4j query to create/merge entity")
+            async with self._driver.session(database=self.database) as session:
+                result = await session.run(query, params)
+                record = await result.single()
+                node = record["e"]
+                metadata_str = node.get("metadata", "{}")
+                metadata = json.loads(metadata_str) if metadata_str else {}
+                logger.debug(f"Created/merged entity: {entity.name}")
+                logger.debug(f"[DEBUG] Entity operation completed successfully")
+                return Entity(
+                    id=UUID(node["id"]),
+                    name=node["name"],
+                    entity_type=node["entity_type"],
+                    description=node.get("description"),
+                    metadata=metadata,
+                )
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to create entity {entity.name}: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Entity details: type={entity.entity_type}, id={entity.id}")
+            logger.exception(f"[EXCEPTION] Entity creation error:")
+            raise
 
     async def link_chunk_to_entity(self, chunk_id: UUID, entity_id: UUID) -> None:
         """Create relationship between chunk and entity."""
@@ -513,37 +567,54 @@ class Neo4jRepository:
         self, embedding: list[float], top_k: int = 10
     ) -> list[tuple[Chunk, float]]:
         """Search for similar chunks using embedding similarity."""
-        query = """
-        MATCH (c:Chunk)
-        WHERE c.embedding IS NOT NULL
-        MATCH (d:Document)-[:HAS_CHUNK]->(c)
-        WITH c, d, 
-             gds.similarity.cosine(c.embedding, $embedding) AS score
-        WHERE score > 0.3
-        RETURN c, d.id as document_id, score
-        ORDER BY score DESC
-        LIMIT $top_k
-        """
-        results = []
-        async with self._driver.session(database=self.database) as session:
-            result = await session.run(query, {"embedding": embedding, "top_k": top_k})
-            async for record in result:
-                node = record["c"]
-                metadata_str = node.get("metadata", "{}")
-                metadata = json.loads(metadata_str) if metadata_str else {}
-                chunk = Chunk(
-                    id=UUID(node["id"]),
-                    document_id=UUID(record["document_id"]),
-                    content=node["content"],
-                    embedding=node.get("embedding"),
-                    chunk_index=node["chunk_index"],
-                    start_char=node["start_char"],
-                    end_char=node["end_char"],
-                    metadata=metadata,
-                    created_at=neo4j_datetime_to_python(node["created_at"]),
-                )
-                results.append((chunk, record["score"]))
-        return results
+        logger.debug(f"[DEBUG] search_similar_chunks called: embedding_dim={len(embedding)}, top_k={top_k}")
+        try:
+            query = """
+            MATCH (c:Chunk)
+            WHERE c.embedding IS NOT NULL
+            MATCH (d:Document)-[:HAS_CHUNK]->(c)
+            WITH c, d, 
+                 gds.similarity.cosine(c.embedding, $embedding) AS score
+            WHERE score > 0.3
+            RETURN c, d.id as document_id, score
+            ORDER BY score DESC
+            LIMIT $top_k
+            """
+            logger.debug(f"[DEBUG] Executing Neo4j similarity search query")
+            results = []
+            async with self._driver.session(database=self.database) as session:
+                result = await session.run(query, {"embedding": embedding, "top_k": top_k})
+                record_count = 0
+                async for record in result:
+                    record_count += 1
+                    try:
+                        node = record["c"]
+                        metadata_str = node.get("metadata", "{}")
+                        metadata = json.loads(metadata_str) if metadata_str else {}
+                        chunk = Chunk(
+                            id=UUID(node["id"]),
+                            document_id=UUID(record["document_id"]),
+                            content=node["content"],
+                            embedding=node.get("embedding"),
+                            chunk_index=node["chunk_index"],
+                            start_char=node["start_char"],
+                            end_char=node["end_char"],
+                            metadata=metadata,
+                            created_at=neo4j_datetime_to_python(node["created_at"]),
+                        )
+                        results.append((chunk, record["score"]))
+                        logger.debug(f"[DEBUG] Processed search result {record_count}: chunk_id={chunk.id}, score={record['score']}")
+                    except Exception as record_e:
+                        logger.error(f"[ERROR] Failed to process search result {record_count}: {type(record_e).__name__}: {str(record_e)}")
+                        logger.exception(f"[EXCEPTION] Search result processing error:")
+                        # Continue with other results
+                logger.debug(f"[DEBUG] Search completed with {len(results)} results")
+            return results
+        except Exception as e:
+            logger.error(f"[ERROR] search_similar_chunks failed: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Query params: embedding_dim={len(embedding)}, top_k={top_k}")
+            logger.exception(f"[EXCEPTION] Similar chunks search error:")
+            raise
 
     async def get_entities_for_chunk(self, chunk_id: UUID) -> list[Entity]:
         """Get all entities mentioned in a chunk."""

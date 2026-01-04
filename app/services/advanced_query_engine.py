@@ -43,41 +43,55 @@ class AdvancedQueryEngine:
         query_cache: Optional[QueryCache] = None,
     ) -> None:
         """Initialize advanced query engine."""
-        self.repository = repository
-        self.embedding_service = embedding_service
-        self.client = openai.AsyncOpenAI(api_key=api_key)
-        self.model = model
-        self.top_k = top_k
-        self.rerank_top_k = rerank_top_k
-        self.min_similarity_threshold = min_similarity_threshold
-        self.max_context_length = max_context_length
-        
-        # Initialize advanced components
-        self.hybrid_search = HybridSearchEngine()
-        
-        self.reranker = None
-        if enable_reranking:
-            self.reranker = RerankerService()
-        
-        self.query_decomposer = None
-        if enable_query_decomposition:
-            self.query_decomposer = QueryDecomposer(api_key=api_key, model=model)
-        
-        self.entity_disambiguator = EntityDisambiguator(api_key=api_key, model=model)
-        
-        self.feedback_service = None
-        if enable_feedback:
-            self.feedback_service = FeedbackService()
-        
-        # New services for enhanced RAG
-        self.hyde_service = hyde_service
-        self.query_reformulator = query_reformulator
-        self.context_compressor = context_compressor
-        self.query_cache = query_cache
-        
-        self.enable_entity_expansion = enable_entity_expansion
-        
-        logger.info(f"Initialized AdvancedQueryEngine with model: {model}")
+        logger.debug(f"[DEBUG] AdvancedQueryEngine.__init__ called with model={model}, enable_reranking={enable_reranking}, enable_decomposition={enable_query_decomposition}")
+        try:
+            self.repository = repository
+            self.embedding_service = embedding_service
+            self.client = openai.AsyncOpenAI(api_key=api_key)
+            self.model = model
+            self.top_k = top_k
+            self.rerank_top_k = rerank_top_k
+            self.min_similarity_threshold = min_similarity_threshold
+            self.max_context_length = max_context_length
+            
+            logger.debug(f"[DEBUG] Initializing advanced components")
+            # Initialize advanced components
+            self.hybrid_search = HybridSearchEngine()
+            logger.debug(f"[DEBUG] HybridSearchEngine initialized")
+            
+            self.reranker = None
+            if enable_reranking:
+                self.reranker = RerankerService()
+                logger.debug(f"[DEBUG] RerankerService initialized")
+            
+            self.query_decomposer = None
+            if enable_query_decomposition:
+                self.query_decomposer = QueryDecomposer(api_key=api_key, model=model)
+                logger.debug(f"[DEBUG] QueryDecomposer initialized")
+            
+            self.entity_disambiguator = EntityDisambiguator(api_key=api_key, model=model)
+            logger.debug(f"[DEBUG] EntityDisambiguator initialized")
+            
+            self.feedback_service = None
+            if enable_feedback:
+                self.feedback_service = FeedbackService()
+                logger.debug(f"[DEBUG] FeedbackService initialized")
+            
+            # New services for enhanced RAG
+            self.hyde_service = hyde_service
+            self.query_reformulator = query_reformulator
+            self.context_compressor = context_compressor
+            self.query_cache = query_cache
+            logger.debug(f"[DEBUG] Optional services configured: hyde={hyde_service is not None}, reformulator={query_reformulator is not None}, compressor={context_compressor is not None}, cache={query_cache is not None}")
+            
+            self.enable_entity_expansion = enable_entity_expansion
+            
+            logger.info(f"Initialized AdvancedQueryEngine with model: {model}")
+            logger.debug(f"[DEBUG] AdvancedQueryEngine initialized successfully")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to initialize AdvancedQueryEngine: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] AdvancedQueryEngine.__init__ traceback:")
+            raise
         if hyde_service:
             logger.info("HyDE service enabled for improved retrieval")
         if query_reformulator:
@@ -101,13 +115,23 @@ class AdvancedQueryEngine:
         """Execute advanced query with multiple strategies."""
         logger.info(f"Processing advanced query: {query}")
         
+        # Quick exit for simple greetings/conversational queries
+        query_lower = query.strip().lower()
+        greetings = {'hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'}
+        if query_lower in greetings or len(query_lower) < 3:
+            logger.info(f"Simple conversational query detected, returning greeting")
+            return QueryResponse(
+                answer="Hello! I'm your AI assistant. I can help you find information from your uploaded documents. Please upload some documents and ask me questions about them.",
+                sources=[],
+                metadata={"query": query, "type": "greeting", "confidence": 1.0},
+            )
+        
         if top_k is None:
             top_k = self.top_k
         
         # Check query cache first
         if self.query_cache:
-            cache_key = f"query:{query}:{top_k}:{strategy.value}"
-            cached_response = await self.query_cache.get(cache_key)
+            cached_response = await self.query_cache.get_result(query, strategy.value, top_k)
             if cached_response:
                 logger.info(f"Cache hit for query: {query[:50]}...")
                 return cached_response
@@ -131,7 +155,7 @@ class AdvancedQueryEngine:
                 # Use HyDE if enabled
                 search_query = query_variant
                 if self.hyde_service:
-                    hyde_doc = await self.hyde_service.generate_hypothetical_document(query_variant)
+                    hyde_doc = await self.hyde_service.generate_hypothetical_answer(query_variant)
                     if hyde_doc != query_variant:  # HyDE generated something different
                         search_query = hyde_doc
                         logger.debug(f"Using HyDE document for search: {hyde_doc[:100]}...")
@@ -162,7 +186,7 @@ class AdvancedQueryEngine:
             )
             # Cache empty response too
             if self.query_cache:
-                await self.query_cache.set(cache_key, empty_response)
+                await self.query_cache.set_result(query, strategy.value, top_k, empty_response)
             return empty_response
         
         # Check similarity threshold
@@ -183,7 +207,7 @@ class AdvancedQueryEngine:
                     },
                 )
                 if self.query_cache:
-                    await self.query_cache.set(cache_key, low_quality_response)
+                    await self.query_cache.set_result(query, strategy.value, top_k, low_quality_response)
                 return low_quality_response
             else:
                 high_quality_results = unique_results
@@ -255,7 +279,7 @@ class AdvancedQueryEngine:
         
         # Cache the response
         if self.query_cache:
-            await self.query_cache.set(cache_key, response)
+            await self.query_cache.set_result(query, strategy.value, top_k, response)
         
         logger.info(f"Generated answer with {len(unique_results)} sources")
         return response
@@ -347,6 +371,9 @@ class AdvancedQueryEngine:
         # Combine scores
         combined = self.hybrid_search.reciprocal_rank_fusion(vector_results, bm25_results)
         
+        # Create a mapping from chunk_id to vector score for lookup
+        vector_score_map = {c.id: s for c, s in vector_results}
+        
         results = []
         for chunk, score in combined[:top_k]:
             entities = await self.repository.get_entities_for_chunk(chunk.id)
@@ -357,7 +384,7 @@ class AdvancedQueryEngine:
                 score=score,
                 metadata=chunk.metadata,
                 entities=[e.name for e in entities],
-                vector_score=dict(vector_results).get(chunk, {1: 0.0})[1] if isinstance(vector_results, list) else 0.0,
+                vector_score=vector_score_map.get(chunk.id, 0.0),
             )
             results.append(result)
         

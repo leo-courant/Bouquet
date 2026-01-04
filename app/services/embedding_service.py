@@ -18,11 +18,18 @@ class EmbeddingService:
         dimensions: int = 1536,  # Neo4j limit is 2048, 1536 is safe and efficient
     ) -> None:
         """Initialize embedding service."""
-        self.client = openai.AsyncOpenAI(api_key=api_key)
-        self.model = model
-        self.embedding_cache = embedding_cache
-        self.dimensions = dimensions
-        logger.info(f"Initialized EmbeddingService with model: {model}, dimensions: {dimensions} (cache={'enabled' if embedding_cache else 'disabled'})")
+        logger.debug(f"[DEBUG] EmbeddingService.__init__ called with model={model}, dimensions={dimensions}, cache={'enabled' if embedding_cache else 'disabled'}")
+        try:
+            self.client = openai.AsyncOpenAI(api_key=api_key)
+            self.model = model
+            self.embedding_cache = embedding_cache
+            self.dimensions = dimensions
+            logger.info(f"Initialized EmbeddingService with model: {model}, dimensions: {dimensions} (cache={'enabled' if embedding_cache else 'disabled'})")
+            logger.debug(f"[DEBUG] EmbeddingService initialized successfully")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to initialize EmbeddingService: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] EmbeddingService.__init__ traceback:")
+            raise
 
     @retry(
         stop=stop_after_attempt(3),
@@ -30,30 +37,53 @@ class EmbeddingService:
     )
     async def generate_embedding(self, text: str) -> list[float]:
         """Generate embedding for a single text with caching."""
+        logger.debug(f"[DEBUG] generate_embedding called: text_length={len(text)}")
         # Try cache first
         if self.embedding_cache:
-            cached = await self.embedding_cache.get_embedding(text)
-            if cached:
-                logger.debug(f"Cache hit for embedding (length {len(text)})")
-                return cached
+            try:
+                logger.debug(f"[DEBUG] Checking cache for embedding")
+                cached = await self.embedding_cache.get_embedding(text)
+                if cached:
+                    logger.debug(f"Cache hit for embedding (length {len(text)})")
+                    return cached
+                else:
+                    logger.debug(f"[DEBUG] Cache miss for embedding")
+            except Exception as cache_e:
+                logger.warning(f"[WARNING] Cache lookup failed: {type(cache_e).__name__}: {str(cache_e)}")
+                # Continue without cache
         
         # Generate new embedding
         try:
+            logger.debug(f"[DEBUG] Calling OpenAI API for embedding: model={self.model}, dimensions={self.dimensions}")
             response = await self.client.embeddings.create(
                 model=self.model,
                 input=text,
                 dimensions=self.dimensions,
             )
             embedding = response.data[0].embedding
+            logger.debug(f"[DEBUG] Embedding generated successfully: dimension={len(embedding)}")
             logger.debug(f"Generated embedding for text of length {len(text)}")
             
             # Cache for future use
             if self.embedding_cache:
-                await self.embedding_cache.set_embedding(text, embedding)
+                try:
+                    logger.debug(f"[DEBUG] Caching embedding")
+                    await self.embedding_cache.set_embedding(text, embedding)
+                except Exception as cache_e:
+                    logger.warning(f"[WARNING] Failed to cache embedding: {type(cache_e).__name__}: {str(cache_e)}")
+                    # Continue even if caching fails
             
             return embedding
+        except openai.APIError as api_e:
+            logger.error(f"[ERROR] OpenAI API error generating embedding: {type(api_e).__name__}: {str(api_e)}")
+            logger.error(f"[ERROR] API details: status_code={getattr(api_e, 'status_code', 'N/A')}, type={getattr(api_e, 'type', 'N/A')}")
+            logger.error(f"[ERROR] Text length: {len(text)}, model: {self.model}")
+            logger.exception(f"[EXCEPTION] Embedding generation API error:")
+            raise
         except Exception as e:
-            logger.error(f"Error generating embedding: {e}")
+            logger.error(f"[ERROR] Unexpected error generating embedding: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Text length: {len(text)}, model: {self.model}")
+            logger.exception(f"[EXCEPTION] Embedding generation error:")
             raise
 
     @retry(
@@ -62,7 +92,9 @@ class EmbeddingService:
     )
     async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts in batch."""
+        logger.debug(f"[DEBUG] generate_embeddings called: batch_size={len(texts)}")
         try:
+            logger.debug(f"[DEBUG] Calling OpenAI API for batch embeddings: model={self.model}, dimensions={self.dimensions}")
             response = await self.client.embeddings.create(
                 model=self.model,
                 input=texts,
@@ -70,9 +102,18 @@ class EmbeddingService:
             )
             embeddings = [item.embedding for item in response.data]
             logger.info(f"Generated {len(embeddings)} embeddings")
+            logger.debug(f"[DEBUG] Batch embedding completed successfully")
             return embeddings
+        except openai.APIError as api_e:
+            logger.error(f"[ERROR] OpenAI API error generating batch embeddings: {type(api_e).__name__}: {str(api_e)}")
+            logger.error(f"[ERROR] API details: status_code={getattr(api_e, 'status_code', 'N/A')}, type={getattr(api_e, 'type', 'N/A')}")
+            logger.error(f"[ERROR] Batch size: {len(texts)}, model: {self.model}")
+            logger.exception(f"[EXCEPTION] Batch embedding API error:")
+            raise
         except Exception as e:
-            logger.error(f"Error generating batch embeddings: {e}")
+            logger.error(f"[ERROR] Unexpected error generating batch embeddings: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Batch size: {len(texts)}, model: {self.model}")
+            logger.exception(f"[EXCEPTION] Batch embedding error:")
             raise
 
     async def compute_similarity(self, embedding1: list[float], embedding2: list[float]) -> float:

@@ -19,6 +19,10 @@ from app.services.conflict_resolver import ConflictResolver
 from app.services.query_intent_classifier import QueryIntentClassifier
 from app.services.iterative_refiner import IterativeRefiner
 from app.services.active_learner import ActiveLearner
+from app.services.cross_document_synthesizer import CrossDocumentSynthesizer
+from app.services.comparative_analyzer import ComparativeAnalyzer
+from app.services.reasoning_chain_builder import ReasoningChainBuilder
+from app.services.citation_validator import CitationValidator
 
 
 class UltraAdvancedQueryEngine(AdvancedQueryEngine):
@@ -53,6 +57,11 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
         query_intent_classifier: Optional[QueryIntentClassifier] = None,
         iterative_refiner: Optional[IterativeRefiner] = None,
         active_learner: Optional[ActiveLearner] = None,
+        # Complex reasoning features
+        cross_document_synthesizer: Optional[CrossDocumentSynthesizer] = None,
+        comparative_analyzer: Optional[ComparativeAnalyzer] = None,
+        reasoning_chain_builder: Optional[ReasoningChainBuilder] = None,
+        citation_validator: Optional[CitationValidator] = None,
     ) -> None:
         """Initialize ultra-advanced query engine."""
         # Initialize parent
@@ -86,6 +95,12 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
         self.iterative_refiner = iterative_refiner
         self.active_learner = active_learner
         
+        # Complex reasoning services
+        self.cross_document_synthesizer = cross_document_synthesizer
+        self.comparative_analyzer = comparative_analyzer
+        self.reasoning_chain_builder = reasoning_chain_builder
+        self.citation_validator = citation_validator
+        
         logger.info("Initialized UltraAdvancedQueryEngine with maximum accuracy features")
         if self_consistency_service:
             logger.info("Self-consistency verification enabled")
@@ -105,6 +120,14 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
             logger.info("Iterative answer refinement enabled")
         if active_learner:
             logger.info("Active learning from feedback enabled")
+        if cross_document_synthesizer:
+            logger.info("Cross-document synthesis enabled")
+        if comparative_analyzer:
+            logger.info("Comparative analysis enabled")
+        if reasoning_chain_builder:
+            logger.info("Reasoning chain building enabled")
+        if citation_validator:
+            logger.info("Citation validation enabled")
 
     async def query(
         self,
@@ -119,6 +142,17 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
     ) -> QueryResponse:
         """Execute ultra-advanced query with maximum accuracy."""
         logger.info(f"Processing ultra-advanced query: {query}")
+        
+        # Quick exit for simple greetings/conversational queries
+        query_lower = query.strip().lower()
+        greetings = {'hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'}
+        if query_lower in greetings or len(query_lower) < 3:
+            logger.info(f"Simple conversational query detected, returning greeting")
+            return QueryResponse(
+                answer="Hello! I'm your AI assistant. I can help you find information from your uploaded documents. Please upload some documents and ask me questions about them.",
+                sources=[],
+                metadata={"query": query, "type": "greeting", "confidence": 1.0},
+            )
         
         if top_k is None:
             top_k = self.top_k
@@ -137,8 +171,7 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
         
         # Check cache first
         if self.query_cache:
-            cache_key = f"ultra_query:{query}:{top_k}:{strategy.value}"
-            cached_response = await self.query_cache.get(cache_key)
+            cached_response = await self.query_cache.get_result(query, strategy.value, top_k)
             if cached_response:
                 logger.info(f"Cache hit for ultra query: {query[:50]}...")
                 return cached_response
@@ -161,7 +194,7 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
             for query_variant in query_variants:
                 search_query = query_variant
                 if self.hyde_service:
-                    hyde_doc = await self.hyde_service.generate_hypothetical_document(query_variant)
+                    hyde_doc = await self.hyde_service.generate_hypothetical_answer(query_variant)
                     if hyde_doc != query_variant:
                         search_query = hyde_doc
                         logger.debug(f"Using HyDE document")
@@ -191,7 +224,7 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
                 metadata={"query": query, "total_sources": 0, "confidence": 0.0},
             )
             if self.query_cache:
-                await self.query_cache.set(cache_key, empty_response)
+                await self.query_cache.set_result(query, strategy.value, top_k, empty_response)
             return empty_response
         
         # Step 4: Temporal ranking (NEW)
@@ -354,7 +387,108 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
                     refinement_history = refinement_result['refinement_history']
                     logger.info(f"Answer refined through {refinement_result['iterations']} iterations")
         
-        # Step 15: Build final response
+        # Step 15: Cross-document synthesis (NEW)
+        synthesis_result = None
+        if self.cross_document_synthesizer and len(unique_results) > 0:
+            # Group sources by document
+            sources_by_doc = self.cross_document_synthesizer.group_sources_by_document(unique_results[:10])
+            
+            if len(sources_by_doc) > 1:
+                logger.info(f"Performing cross-document synthesis across {len(sources_by_doc)} documents")
+                synthesis_result = await self.cross_document_synthesizer.synthesize_answer(
+                    query, sources_by_doc, conflicts
+                )
+                
+                if synthesis_result.get('synthesized') and synthesis_result.get('answer'):
+                    # Use synthesized answer
+                    original_answer = answer
+                    answer = synthesis_result['answer']
+                    logger.info("Using cross-document synthesized answer")
+        
+        # Step 16: Comparative analysis (NEW)
+        comparison_result = None
+        if self.comparative_analyzer:
+            # Check if this is a comparison query
+            comparison_analysis = await self.comparative_analyzer.analyze_comparison_query(
+                query, unique_results[:10]
+            )
+            
+            if comparison_analysis['is_comparison'] and len(comparison_analysis.get('targets', [])) >= 2:
+                logger.info(f"Performing comparative analysis for comparison query")
+                
+                target1, target2 = comparison_analysis['targets'][:2]
+                comparison_result = await self.comparative_analyzer.generate_structured_comparison(
+                    query, target1, target2, unique_results[:10]
+                )
+                
+                if comparison_result.get('comparison'):
+                    # Use comparison result as answer
+                    answer = comparison_result['comparison']
+                    logger.info("Using comparative analysis answer")
+        
+        # Step 17: Build reasoning chain (NEW)
+        reasoning_chain = None
+        if self.reasoning_chain_builder and (subqueries and len(subqueries) > 1 or any(hasattr(r, 'reasoning_path') and r.reasoning_path for r in unique_results[:5])):
+            logger.info("Building explicit reasoning chain")
+            
+            sub_query_list = [sq.query for sq in subqueries] if len(subqueries) > 1 else None
+            
+            reasoning_chain = await self.reasoning_chain_builder.build_reasoning_chain(
+                query, unique_results[:10], sub_query_list
+            )
+            
+            # Validate the chain
+            chain_validation = await self.reasoning_chain_builder.validate_reasoning_chain(
+                reasoning_chain['chain'], answer
+            )
+            
+            if not chain_validation['valid']:
+                logger.warning(f"Reasoning chain validation failed: confidence {chain_validation['confidence']:.2f}")
+        
+        # Step 18: Citation validation (NEW)
+        citation_validation = None
+        if self.citation_validator and confidence_data and not confidence_data.get('should_abstain', False):
+            logger.info("Validating citations in answer")
+            
+            citation_validation = await self.citation_validator.validate_answer_citations(
+                answer, unique_results[:10]
+            )
+            
+            if not citation_validation['valid']:
+                # Format percentage safely - handle 0 citations case
+                total_cites = citation_validation['total_citations']
+                validated_cites = citation_validation['validated_citations']
+                score = citation_validation['score']
+                
+                if total_cites == 0:
+                    logger.warning("Citation validation failed: No citations found in answer")
+                else:
+                    logger.warning(
+                        f"Citation validation failed: {score:.2%} "
+                        f"({validated_cites}/{total_cites})"
+                    )
+                
+                # Try to fix citations
+                corrected_answer = await self.citation_validator.suggest_citation_fixes(
+                    answer, unique_results[:10], citation_validation
+                )
+                
+                if corrected_answer:
+                    logger.info("Applied citation corrections")
+                    answer = corrected_answer
+                    
+                    # Re-validate
+                    citation_validation = await self.citation_validator.validate_answer_citations(
+                        answer, unique_results[:10]
+                    )
+            
+            # Log final validation result
+            if citation_validation['total_citations'] > 0:
+                logger.info(f"Citation validation: {citation_validation['score']:.2%}")
+            else:
+                logger.info("Citation validation: No citations to validate")
+        
+        # Step 19: Build final response
         query_type = subqueries[0].query_type if subqueries else QueryType.FACTUAL
         
         response = QueryResponse(
@@ -379,12 +513,20 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
                 "refinement_iterations": len(refinement_history),
                 "query_classification": query_classification['query_type'] if query_classification else None,
                 "complexity": query_classification['complexity'] if query_classification else None,
+                # Complex reasoning metadata
+                "cross_document_synthesis": synthesis_result is not None and synthesis_result.get('synthesized'),
+                "num_documents": synthesis_result.get('num_documents') if synthesis_result else None,
+                "comparative_analysis": comparison_result is not None,
+                "comparison_targets": comparison_result.get('target1') + " vs " + comparison_result.get('target2') if comparison_result else None,
+                "reasoning_chain_steps": reasoning_chain.get('num_steps') if reasoning_chain else None,
+                "citation_validation_score": citation_validation.get('score') if citation_validation else None,
+                "citation_valid": citation_validation.get('valid') if citation_validation else None,
             },
             query_type=query_type,
             decomposed_queries=[sq.query for sq in subqueries] if len(subqueries) > 1 else [],
         )
         
-        # Step 16: Active learning - record for future improvement (NEW)
+        # Step 20: Active learning - record for future improvement (NEW)
         if self.active_learner and confidence_data and not confidence_data['should_abstain']:
             # This will be updated when user provides feedback
             # For now, just log that we're ready for feedback
@@ -392,9 +534,10 @@ class UltraAdvancedQueryEngine(AdvancedQueryEngine):
         
         # Cache the response
         if self.query_cache:
-            await self.query_cache.set(cache_key, response)
+            await self.query_cache.set_result(query, strategy.value, top_k, response)
         
-        logger.info(f"Generated ultra-accurate answer with confidence {confidence_data['overall_confidence']:.3f if confidence_data else 'N/A'}")
+        confidence_str = f"{confidence_data['overall_confidence']:.3f}" if confidence_data else "N/A"
+        logger.info(f"Generated ultra-accurate answer with confidence {confidence_str}")
         return response
 
     def _build_enhanced_system_prompt(

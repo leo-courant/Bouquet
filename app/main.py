@@ -18,31 +18,47 @@ from app.core import get_settings, setup_logging
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan events."""
     # Startup
-    setup_logging()
-    logger.info("Starting Smart RAG application")
+    logger.debug(f"[DEBUG] Application startup initiated")
+    try:
+        setup_logging()
+        logger.info("Starting Smart RAG application")
+        logger.debug(f"[DEBUG] Logging configured successfully")
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to setup logging: {type(e).__name__}: {str(e)}")
+        logger.exception(f"[EXCEPTION] Logging setup error:")
+        raise
     
     # Clear database on startup for fresh state
     try:
+        logger.debug(f"[DEBUG] Attempting to clear database on startup")
         from app.core import get_neo4j_repository
         async for repo in get_neo4j_repository():
             await repo.clear_all()
             logger.info("Database cleared on startup - starting with fresh state")
+            logger.debug(f"[DEBUG] Database cleared successfully")
             break
     except Exception as e:
-        logger.warning(f"Could not clear database on startup: {e}")
+        logger.warning(f"[WARNING] Could not clear database on startup: {type(e).__name__}: {str(e)}")
+        logger.exception(f"[EXCEPTION] Database clear on startup error:")
 
+    logger.debug(f"[DEBUG] Application startup completed")
     yield
 
     # Shutdown - also clear database
     logger.info("Shutting down Smart RAG application")
+    logger.debug(f"[DEBUG] Application shutdown initiated")
     try:
+        logger.debug(f"[DEBUG] Attempting to clear database on shutdown")
         from app.core import get_neo4j_repository
         async for repo in get_neo4j_repository():
             await repo.clear_all()
             logger.info("Database cleared on shutdown")
+            logger.debug(f"[DEBUG] Database cleared successfully")
             break
     except Exception as e:
-        logger.warning(f"Could not clear database on shutdown: {e}")
+        logger.warning(f"[WARNING] Could not clear database on shutdown: {type(e).__name__}: {str(e)}")
+        logger.exception(f"[EXCEPTION] Database clear on shutdown error:")
+    logger.debug(f"[DEBUG] Application shutdown completed")
 
 
 # Create FastAPI app

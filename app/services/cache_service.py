@@ -70,7 +70,15 @@ class CacheService:
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
         """Set value in cache."""
         ttl = ttl or self.ttl
-        serialized = json.dumps(value)
+        
+        # Convert Pydantic models to dict for serialization
+        from pydantic import BaseModel
+        if isinstance(value, BaseModel):
+            value_to_cache = value.model_dump(mode='json')
+        else:
+            value_to_cache = value
+        
+        serialized = json.dumps(value_to_cache)
         
         # Try Redis first
         if self.redis_client:
@@ -85,7 +93,7 @@ class CacheService:
             # Simple LRU: remove first item
             self.memory_cache.pop(next(iter(self.memory_cache)))
         
-        self.memory_cache[key] = value
+        self.memory_cache[key] = value_to_cache
 
     async def delete(self, key: str) -> None:
         """Delete from cache."""
@@ -174,7 +182,7 @@ class QueryCache:
         query: str,
         strategy: str,
         top_k: int,
-        result: dict,
+        result: Any,  # Accept dict or Pydantic model
     ) -> None:
         """Cache query result (5 minute TTL - data might be updated)."""
         key = self.prefix + self.cache.hash_key(query, strategy, top_k)

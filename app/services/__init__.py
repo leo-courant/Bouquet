@@ -28,6 +28,7 @@ from app.services.self_consistency import SelfConsistencyService
 from app.services.semantic_chunker import SemanticChunker
 from app.services.temporal_ranker import TemporalRanker
 from app.services.ultra_advanced_query_engine import UltraAdvancedQueryEngine
+from app.services.query_complexity_analyzer import QueryComplexityAnalyzer
 
 __all__ = [
     "EmbeddingService",
@@ -61,4 +62,5 @@ __all__ = [
     "QueryIntentClassifier",
     "IterativeRefiner",
     "ActiveLearner",
+    "QueryComplexityAnalyzer",
 ]

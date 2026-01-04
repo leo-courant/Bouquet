@@ -20,10 +20,17 @@ class EntityExtractor:
         max_entities: int = 50,
     ) -> None:
         """Initialize entity extractor."""
-        self.client = openai.AsyncOpenAI(api_key=api_key)
-        self.model = model
-        self.max_entities = max_entities
-        logger.info(f"Initialized EntityExtractor with model: {model}")
+        logger.debug(f"[DEBUG] EntityExtractor.__init__ called with model={model}, max_entities={max_entities}")
+        try:
+            self.client = openai.AsyncOpenAI(api_key=api_key)
+            self.model = model
+            self.max_entities = max_entities
+            logger.info(f"Initialized EntityExtractor with model: {model}")
+            logger.debug(f"[DEBUG] EntityExtractor initialized successfully")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to initialize EntityExtractor: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] EntityExtractor.__init__ traceback:")
+            raise
 
     @retry(
         stop=stop_after_attempt(3),
@@ -33,7 +40,9 @@ class EntityExtractor:
         self, text: str
     ) -> tuple[list[Entity], list[Relationship]]:
         """Extract entities and relationships from text."""
-        system_prompt = """You are an expert at extracting structured knowledge from text.
+        logger.debug(f"[DEBUG] extract_entities_and_relationships called: text_length={len(text)}")
+        try:
+            system_prompt = """You are an expert at extracting structured knowledge from text.
 Extract named entities and relationships from the provided text.
 
 Return a JSON object with this structure:
@@ -63,9 +72,9 @@ Guidelines:
 - Avoid redundant or trivial entities
 """
 
-        user_prompt = f"Extract entities and relationships from this text:\n\n{text}"
+            user_prompt = f"Extract entities and relationships from this text:\n\n{text}"
 
-        try:
+            logger.debug(f"[DEBUG] Calling OpenAI for entity extraction with model {self.model}")
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -77,42 +86,79 @@ Guidelines:
             )
 
             content = response.choices[0].message.content
-            data = json.loads(content)
+            logger.debug(f"[DEBUG] Received response from OpenAI: {len(content)} characters")
+            try:
+                data = json.loads(content)
+                logger.debug(f"[DEBUG] Parsed JSON response successfully")
+            except json.JSONDecodeError as json_e:
+                logger.error(f"[ERROR] Failed to parse JSON response: {str(json_e)}")
+                logger.error(f"[ERROR] Response content: {content[:500]}...")
+                raise
 
             # Parse entities
             entities = []
             entity_map = {}
-            for ent_data in data.get("entities", [])[:self.max_entities]:
-                entity = Entity(
-                    name=ent_data["name"],
-                    entity_type=ent_data.get("type", "OTHER"),
-                    description=ent_data.get("description"),
-                )
-                entities.append(entity)
-                entity_map[entity.name] = entity
+            raw_entities = data.get("entities", [])
+            logger.debug(f"[DEBUG] Extracting {len(raw_entities)} entities (max={self.max_entities})")
+            for idx, ent_data in enumerate(raw_entities[:self.max_entities]):
+                try:
+                    entity = Entity(
+                        name=ent_data["name"],
+                        entity_type=ent_data.get("type", "OTHER"),
+                        description=ent_data.get("description"),
+                    )
+                    entities.append(entity)
+                    entity_map[entity.name] = entity
+                    logger.debug(f"[DEBUG] Parsed entity {idx+1}: {entity.name} ({entity.entity_type})")
+                except Exception as ent_e:
+                    logger.error(f"[ERROR] Failed to parse entity {idx+1}: {type(ent_e).__name__}: {str(ent_e)}")
+                    logger.error(f"[ERROR] Entity data: {ent_data}")
+                    # Continue with other entities
 
             # Parse relationships
             relationships = []
-            for rel_data in data.get("relationships", []):
-                source_name = rel_data["source"]
-                target_name = rel_data["target"]
+            raw_relationships = data.get("relationships", [])
+            logger.debug(f"[DEBUG] Extracting {len(raw_relationships)} relationships")
+            for idx, rel_data in enumerate(data.get("relationships", [])):
+                try:
+                    source_name = rel_data["source"]
+                    target_name = rel_data["target"]
+                    logger.debug(f"[DEBUG] Processing relationship {idx+1}: {source_name} -> {target_name}")
 
-                # Ensure both entities exist
-                if source_name in entity_map and target_name in entity_map:
-                    relationship = Relationship(
-                        source_entity_id=entity_map[source_name].id,
-                        target_entity_id=entity_map[target_name].id,
-                        relationship_type=rel_data["type"],
-                        description=rel_data.get("description"),
-                    )
-                    relationships.append(relationship)
+                    # Ensure both entities exist
+                    if source_name in entity_map and target_name in entity_map:
+                        relationship = Relationship(
+                            source_entity_id=entity_map[source_name].id,
+                            target_entity_id=entity_map[target_name].id,
+                            relationship_type=rel_data["type"],
+                            description=rel_data.get("description"),
+                        )
+                        relationships.append(relationship)
+                        logger.debug(f"[DEBUG] Created relationship: {rel_data['type']}")
+                    else:
+                        logger.warning(f"[WARNING] Skipping relationship {idx+1}: entities not found (source={source_name in entity_map}, target={target_name in entity_map})")
+                except Exception as rel_e:
+                    logger.error(f"[ERROR] Failed to parse relationship {idx+1}: {type(rel_e).__name__}: {str(rel_e)}")
+                    logger.error(f"[ERROR] Relationship data: {rel_data}")
+                    # Continue with other relationships
 
             logger.info(
                 f"Extracted {len(entities)} entities and {len(relationships)} relationships"
             )
+            logger.debug(f"[DEBUG] Entity extraction completed successfully")
             return entities, relationships
 
+        except openai.APIError as api_e:
+            logger.error(f"[ERROR] OpenAI API error during entity extraction: {type(api_e).__name__}: {str(api_e)}")
+            logger.error(f"[ERROR] API details: status_code={getattr(api_e, 'status_code', 'N/A')}, type={getattr(api_e, 'type', 'N/A')}")
+            logger.error(f"[ERROR] Text length: {len(text)}")
+            logger.exception(f"[EXCEPTION] Entity extraction API error:")
+            raise
         except Exception as e:
+            logger.error(f"[ERROR] Unexpected error during entity extraction: {type(e).__name__}: {str(e)}")
+            logger.error(f"[ERROR] Text length: {len(text)}")
+            logger.exception(f"[EXCEPTION] Entity extraction error:")
+            raise
             logger.error(f"Error extracting entities: {e}")
             return [], []
 

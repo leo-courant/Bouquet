@@ -137,7 +137,7 @@ async def get_graph_visualization(
                nodeLabels[0] as type,
                CASE WHEN n:Entity THEN n.entity_type ELSE null END as entityType,
                CASE WHEN n:Community THEN n.level ELSE null END as level,
-               CASE WHEN n:Community THEN n.summary ELSE null END as summary,
+               CASE WHEN n:Community AND n.summary IS NOT NULL THEN n.summary ELSE null END as summary,
                CASE 
                    WHEN n:Chunk THEN n.content
                    WHEN n:Document THEN n.content

@@ -81,6 +81,11 @@ class QueryResponse(BaseModel):
     retrieved_entities: list[dict] = Field(default_factory=list)
     confidence: Optional[float] = None
 
+    class Config:
+        json_encoders = {UUID: str}
+        # Ensure model can be serialized
+        use_enum_values = True
+
 
 class SearchRequest(BaseModel):
     """Request model for semantic search without generation."""

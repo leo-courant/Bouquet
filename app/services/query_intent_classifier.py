@@ -25,6 +25,20 @@ class QueryIntentClassifier:
     async def classify_query(self, query: str) -> dict:
         """Classify query intent and characteristics."""
         
+        # Quick heuristic check for very simple queries to avoid LLM calls
+        query_lower = query.strip().lower()
+        if len(query_lower) < 10:
+            # Very short query, likely simple
+            return {
+                'query_type': 'exploratory',
+                'complexity': 'simple',
+                'question_type': 'open_ended',
+                'entities': [],
+                'optimal_strategy': 'community_based',
+                'requires_multi_hop': False,
+                'requires_aggregation': False,
+            }
+        
         # Parallel classification
         import asyncio
         

@@ -23,36 +23,55 @@ class GraphBuilder:
         similarity_threshold: float = 0.7,
     ) -> None:
         """Initialize graph builder."""
-        self.repository = repository
-        self.min_community_size = min_community_size
-        self.max_levels = max_levels
-        self.similarity_threshold = similarity_threshold
-        logger.info(
-            f"Initialized GraphBuilder (min_size={min_community_size}, max_levels={max_levels})"
-        )
+        logger.debug(f"[DEBUG] GraphBuilder.__init__ called with min_size={min_community_size}, max_levels={max_levels}, threshold={similarity_threshold}")
+        try:
+            self.repository = repository
+            self.min_community_size = min_community_size
+            self.max_levels = max_levels
+            self.similarity_threshold = similarity_threshold
+            logger.info(
+                f"Initialized GraphBuilder (min_size={min_community_size}, max_levels={max_levels})"
+            )
+            logger.debug(f"[DEBUG] GraphBuilder initialized successfully")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to initialize GraphBuilder: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] GraphBuilder.__init__ traceback:")
+            raise
 
     async def build_entity_graph(self) -> nx.Graph:
         """Build NetworkX graph from Neo4j entity relationships."""
-        query = """
-        MATCH (e1:Entity)-[r:RELATED]->(e2:Entity)
-        RETURN e1.id as source, e2.id as target, r.weight as weight
-        """
+        logger.debug(f"[DEBUG] build_entity_graph called")
+        try:
+            query = """
+            MATCH (e1:Entity)-[r:RELATED]->(e2:Entity)
+            RETURN e1.id as source, e2.id as target, r.weight as weight
+            """
 
-        G = nx.Graph()
+            G = nx.Graph()
+            logger.debug(f"[DEBUG] Executing Neo4j query to fetch entity relationships")
 
-        async with self.repository._driver.session(
-            database=self.repository.database
-        ) as session:
-            result = await session.run(query)
-            async for record in result:
-                G.add_edge(
-                    record["source"],
-                    record["target"],
-                    weight=record.get("weight", 1.0),
-                )
+            async with self.repository._driver.session(
+                database=self.repository.database
+            ) as session:
+                result = await session.run(query)
+                edge_count = 0
+                async for record in result:
+                    G.add_edge(
+                        record["source"],
+                        record["target"],
+                        weight=record.get("weight", 1.0),
+                    )
+                    edge_count += 1
+                    if edge_count % 100 == 0:
+                        logger.debug(f"[DEBUG] Processed {edge_count} edges")
 
-        logger.info(f"Built entity graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
-        return G
+            logger.info(f"Built entity graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
+            logger.debug(f"[DEBUG] build_entity_graph completed successfully")
+            return G
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to build entity graph: {type(e).__name__}: {str(e)}")
+            logger.exception(f"[EXCEPTION] Entity graph building error:")
+            raise
 
     def detect_communities(self, graph: nx.Graph, resolution: float = 1.0) -> dict[str, int]:
         """Detect communities using Louvain algorithm."""
